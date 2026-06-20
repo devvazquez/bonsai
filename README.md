@@ -10,6 +10,6 @@ Bonsai-Glasses/
 │   └── software/       # Host-side application and companion software
 ├── hardware/
 │   ├── cad/            # 3D CAD models and mechanical designs
-│   └── bonsai_pcb/            # PCB schematics and board layouts
+│   └── bonsai_pcb/     # PCB schematics and board layouts
 └── assets/             # Images, logos, and other design assets
 ```
