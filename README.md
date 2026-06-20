@@ -11,8 +11,5 @@ Bonsai-Glasses/
 ├── hardware/
 │   ├── cad/            # 3D CAD models and mechanical designs
 │   └── bonsai_pcb/            # PCB schematics and board layouts
-├── docs/               # Project documentation
-├── tests/              # Test files and test suites
-├── scripts/            # Build, flash, and utility scripts
 └── assets/             # Images, logos, and other design assets
 ```
