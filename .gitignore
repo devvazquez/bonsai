@@ -1,0 +1,4 @@
+hardware/bonsai_pcb/*
+
+!hardware/bonsai_pcb/*.step
+!hardware/bonsai_pcb/*.zip

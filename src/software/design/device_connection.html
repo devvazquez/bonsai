@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Bonsai - Device Connection</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "surface-dim": "#d1d5d7",
+                        "secondary-fixed": "#d9dff5",
+                        "on-tertiary": "#ffeff1",
+                        "on-tertiary-container": "#640430",
+                        "on-surface-variant": "#595c5d",
+                        "on-primary": "#f8f0ff",
+                        "error-container": "#f74b6d",
+                        "secondary-fixed-dim": "#cbd1e6",
+                        "tertiary": "#9d365b",
+                        "outline": "#757778",
+                        "outline-variant": "#abadae",
+                        "on-tertiary-fixed": "#380018",
+                        "on-secondary-fixed": "#373d4e",
+                        "error-dim": "#a70138",
+                        "on-tertiary-fixed-variant": "#701039",
+                        "surface-tint": "#6a37d4",
+                        "primary-dim": "#5e26c7",
+                        "inverse-primary": "#a078ff",
+                        "surface-variant": "#dadddf",
+                        "on-secondary-fixed-variant": "#535a6b",
+                        "on-surface": "#2c2f30",
+                        "primary": "#6a37d4",
+                        "primary-container": "#ae8dff",
+                        "inverse-on-surface": "#9b9d9e",
+                        "surface-container-high": "#e0e3e4",
+                        "surface-container-low": "#eff1f2",
+                        "surface-container-lowest": "#ffffff",
+                        "on-primary-fixed-variant": "#370086",
+                        "surface-bright": "#f5f6f7",
+                        "error": "#b41340",
+                        "on-secondary": "#f0f2ff",
+                        "on-error-container": "#510017",
+                        "secondary-dim": "#494f61",
+                        "on-secondary-container": "#495061",
+                        "tertiary-fixed": "#ff8eb0",
+                        "tertiary-fixed-dim": "#f67ca3",
+                        "primary-fixed-dim": "#a27cff",
+                        "on-error": "#ffefef",
+                        "background": "#f5f6f7",
+                        "secondary": "#545b6d",
+                        "primary-fixed": "#ae8dff",
+                        "tertiary-dim": "#8e294f",
+                        "on-primary-container": "#2b006e",
+                        "on-primary-fixed": "#000000",
+                        "surface-container-highest": "#dadddf",
+                        "surface-container": "#e6e8ea",
+                        "on-background": "#2c2f30",
+                        "secondary-container": "#d9dff5",
+                        "tertiary-container": "#ff8eb0",
+                        "surface": "#f5f6f7",
+                        "inverse-surface": "#0c0f10"
+                    },
+                    fontFamily: {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .animate-radar {
+            animation: radar 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+        @keyframes radar {
+            0% { transform: scale(0.8); opacity: 0.8; }
+            100% { transform: scale(2.5); opacity: 0; }
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="bg-background font-body text-on-surface min-h-screen pb-32">
+<!-- TopAppBar -->
+<header class="bg-white/80 dark:bg-slate-950/80 backdrop-blur-xl shadow-sm dark:shadow-none fixed top-0 w-full z-50">
+<div class="flex items-center justify-between px-6 h-16 w-full">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-violet-600 dark:text-violet-400" data-icon="settings_input_antenna">settings_input_antenna</span>
+<h1 class="font-['Manrope'] font-black tracking-[0.2em] text-xl text-slate-900 dark:text-white">BONSAI</h1>
+</div>
+<div class="w-10 h-10 rounded-full bg-surface-container-high flex items-center justify-center overflow-hidden hover:opacity-80 transition-opacity active:scale-95 duration-200">
+<img alt="User profile avatar" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBzGXSi7dyZ53iodhS5kZBGt3Lpg5WoDQq5Pt5Fxu80K84Uznm2jDJmyGiRn9tQSvdtUDI-79JgW9190DZWktw37NfwgNJcdiYC9KrE6CTprYHU5uARl_2VcDZl1AkqA75oux1LclLh0OnWO8R5ufX5sGj1LSTZaT3dxrGP0qUGX4_89t6nIWHs7vHMajZfW5Xd8msMwHmOmxKlljk1-5pzi-TSmuVaSLJThg-q2I8UmFdJH8jYw3uOds9XQsAfQ7oB9V_gvCrwf4k"/>
+</div>
+</div>
+</header>
+<main class="pt-24 px-6 max-w-2xl mx-auto space-y-12">
+<!-- Hero Searching Section -->
+<section class="flex flex-col items-center justify-center py-12 space-y-8 relative overflow-hidden">
+<div class="relative flex items-center justify-center">
+<!-- Radar Rings -->
+<div class="absolute w-24 h-24 bg-primary/20 rounded-full animate-radar"></div>
+<div class="absolute w-24 h-24 bg-primary/10 rounded-full animate-radar" style="animation-delay: 0.6s;"></div>
+<div class="absolute w-24 h-24 bg-primary/5 rounded-full animate-radar" style="animation-delay: 1.2s;"></div>
+<!-- Central Icon -->
+<div class="relative z-10 w-32 h-32 bg-surface-container-lowest rounded-full shadow-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-primary text-5xl" data-icon="bluetooth" style="font-variation-settings: 'FILL' 1;">bluetooth</span>
+</div>
+</div>
+<div class="text-center space-y-2">
+<h2 class="font-headline font-bold text-3xl tracking-tight">Searching for devices...</h2>
+<p class="text-on-surface-variant font-medium">Ensure your Bonsai glasses are in pairing mode</p>
+</div>
+</section>
+<!-- Bento Grid for Devices -->
+<section class="space-y-6">
+<div class="flex items-center justify-between">
+<h3 class="font-headline font-bold text-xl">Available Now</h3>
+<span class="text-primary text-sm font-semibold tracking-wide uppercase">Refresh</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<!-- Primary Active Device Card -->
+<div class="col-span-1 md:col-span-2 bg-surface-container-lowest p-6 rounded-lg relative overflow-hidden group hover:shadow-md transition-shadow">
+<div class="absolute top-0 right-0 p-4">
+<span class="inline-flex items-center px-3 py-1 rounded-full bg-primary-container text-on-primary-container text-xs font-bold uppercase tracking-wider">
+                            Recommended
+                        </span>
+</div>
+<div class="flex items-start gap-6">
+<div class="w-20 h-20 bg-surface-container-low rounded-xl flex items-center justify-center overflow-hidden">
+<img alt="Bonsai Glass v1" class="w-full h-full object-cover mix-blend-multiply opacity-80" data-alt="Modern smart glasses with clear lenses and sleek black frames on a clean white background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCVaQvltF9YqgE3HS0HapAGuIkh2d02Idqg778N12xrm5xn6Awodzpy7fJycqMGQTP5DfIFT61wnViPktIadrPhoXMrUHf7rWMhy4FdhImdyT7sJwgXz1SCEuXw-bBIszUupKZn8zUp7zMskwNWy4OYqMIhnxMMG77cre0Sug3MlGXvCPVxI7iZudGRNHdHtndZ5f6NYtHYl-w3kbRDxVMtyJE9k16hBgqb0-xES4xeV2XuNC4T8UesKNAHx9tDVZ1UGJk3DSn0J5A"/>
+</div>
+<div class="flex-1 space-y-1">
+<p class="text-on-surface-variant text-sm font-medium uppercase tracking-widest">Smart Wearable</p>
+<h4 class="font-headline font-extrabold text-2xl">Bonsai Glass v1</h4>
+<div class="flex items-center gap-2 pt-2 text-primary">
+<span class="material-symbols-outlined text-sm" data-icon="signal_cellular_alt">signal_cellular_alt</span>
+<span class="text-xs font-bold">Strong Signal</span>
+</div>
+</div>
+</div>
+<button class="mt-6 w-full bg-on-primary-fixed text-surface-container-lowest font-bold py-4 rounded-full flex items-center justify-center gap-2 hover:opacity-90 active:scale-95 transition-all">
+<span>Pair Device</span>
+<span class="material-symbols-outlined" data-icon="chevron_right">chevron_right</span>
+</button>
+</div>
+<!-- Secondary Device Card -->
+<div class="bg-surface-container-lowest p-6 rounded-lg hover:shadow-md transition-shadow cursor-pointer border border-transparent hover:border-outline-variant/20">
+<div class="flex flex-col gap-4">
+<div class="flex justify-between items-start">
+<span class="material-symbols-outlined text-on-surface-variant text-3xl" data-icon="headphones">headphones</span>
+<span class="text-xs font-medium text-on-surface-variant">Last paired: 2h ago</span>
+</div>
+<div>
+<h4 class="font-headline font-bold text-lg">Bonsai Pods Pro</h4>
+<p class="text-on-surface-variant text-sm">Saved Device</p>
+</div>
+<div class="flex items-center justify-between mt-2">
+<div class="flex items-center gap-1">
+<span class="w-2 h-2 rounded-full bg-surface-dim"></span>
+<span class="text-xs text-on-surface-variant">Offline</span>
+</div>
+<span class="material-symbols-outlined text-primary" data-icon="sync">sync</span>
+</div>
+</div>
+</div>
+<!-- Another Device Card -->
+<div class="bg-surface-container-lowest p-6 rounded-lg hover:shadow-md transition-shadow cursor-pointer border border-transparent hover:border-outline-variant/20">
+<div class="flex flex-col gap-4">
+<div class="flex justify-between items-start">
+<span class="material-symbols-outlined text-on-surface-variant text-3xl" data-icon="watch">watch</span>
+<span class="text-xs font-medium text-on-surface-variant">New Device</span>
+</div>
+<div>
+<h4 class="font-headline font-bold text-lg">Bonsai Watch S</h4>
+<p class="text-on-surface-variant text-sm">Bluetooth Low Energy</p>
+</div>
+<div class="flex items-center justify-between mt-2">
+<div class="flex items-center gap-1 text-primary">
+<span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+<span class="text-xs font-bold">Ready</span>
+</div>
+<span class="material-symbols-outlined text-primary" data-icon="add_circle">add_circle</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Help Section -->
+<section class="bg-primary-container/30 p-8 rounded-xl space-y-4">
+<h4 class="font-headline font-bold text-on-primary-container text-lg">Can't find your device?</h4>
+<ul class="space-y-3">
+<li class="flex gap-3 text-sm text-on-primary-container/80">
+<span class="material-symbols-outlined text-sm" data-icon="check_circle">check_circle</span>
+<span>Make sure Bluetooth is enabled on your phone.</span>
+</li>
+<li class="flex gap-3 text-sm text-on-primary-container/80">
+<span class="material-symbols-outlined text-sm" data-icon="check_circle">check_circle</span>
+<span>Press and hold the temple button for 5 seconds to enter pairing mode.</span>
+</li>
+</ul>
+<button class="text-primary font-bold text-sm underline underline-offset-4 pt-2">Learn more about pairing</button>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="fixed bottom-6 left-0 right-0 z-50 flex justify-around items-center px-4 py-2 bg-white/70 dark:bg-slate-900/70 backdrop-blur-2xl shadow-[0_20px_50px_rgba(0,0,0,0.1)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.3)] mx-auto inset-x-0 w-[90%] rounded-full">
+<!-- Live View -->
+<a class="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 w-14 h-14 hover:text-violet-500 transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="videocam">videocam</span>
+<span class="font-['Inter'] text-[10px] font-semibold uppercase tracking-widest mt-1">Live View</span>
+</a>
+<!-- Devices (Active) -->
+<a class="flex flex-col items-center justify-center bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-full w-14 h-14 translate-y-[-4px] animate-pulse-slow active:scale-90 shadow-lg" href="#">
+<span class="material-symbols-outlined" data-icon="bluetooth" style="font-variation-settings: 'FILL' 1;">bluetooth</span>
+<span class="font-['Inter'] text-[8px] font-semibold uppercase tracking-widest mt-0.5">Devices</span>
+</a>
+<!-- Settings -->
+<a class="flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 w-14 h-14 hover:text-violet-500 transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-['Inter'] text-[10px] font-semibold uppercase tracking-widest mt-1">Settings</span>
+</a>
+</nav>
+</body></html>
