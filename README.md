@@ -5,6 +5,7 @@ The main repository containing all the files involved in the creation of these s
 
 ```
 Bonsai-Glasses/
+├── bom.csv             # The bill of materials with links.
 ├── src/
 │   ├── firmware/       # Embedded / microcontroller source code
 │   └── software/       # Host-side application and companion software
