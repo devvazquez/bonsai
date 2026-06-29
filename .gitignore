@@ -1,4 +1,4 @@
 hardware/bonsai_pcb/*
-
+*.env
 !hardware/bonsai_pcb/*.step
 !hardware/bonsai_pcb/*.zip
