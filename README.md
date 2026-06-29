@@ -1,4 +1,4 @@
-# Bonsai-Glasses
+# Bonsai
 The main repository containing all the files involved in the creation of these smart glasses, such as cad files, code, designs...
 
 <img height="720" alt="IMG_3797" src="https://github.com/user-attachments/assets/816af56a-fea3-4214-b69e-b98444782122" />
