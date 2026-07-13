@@ -2,6 +2,7 @@
 The main repository containing all the files involved in the creation of these smart glasses, such as cad files, code, designs...
 
 <img height="720" alt="IMG_3797" src="https://github.com/user-attachments/assets/816af56a-fea3-4214-b69e-b98444782122" />
+<img width="1280" height="640" alt="22877814-e29b-4794-9276-75eacdae1a95" src="https://github.com/user-attachments/assets/1a2a9ede-5398-45c5-bfc8-b07443b2d9db" />
 
 
 ## Repository Structure
