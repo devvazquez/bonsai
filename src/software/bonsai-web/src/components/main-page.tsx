@@ -1,0 +1,342 @@
+import * as React from "react"
+import {
+  BatteryMediumIcon,
+  BellIcon,
+  CameraIcon,
+  CpuIcon,
+  GlassesIcon,
+  MoonIcon,
+  SignalIcon,
+  SparklesIcon,
+  SunIcon,
+  SunMoonIcon,
+  UnplugIcon,
+  Volume2Icon,
+} from "lucide-react"
+
+import { useTheme } from "@/components/theme-provider"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { Slider } from "@/components/ui/slider"
+import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
+import { cn } from "@/lib/utils"
+
+// Lazy-loaded so three.js stays out of the initial bundle.
+const GlassesViewer = React.lazy(() =>
+  import("@/components/glasses-viewer").then((module) => ({
+    default: module.GlassesViewer,
+  }))
+)
+
+// Mocked telemetry until the BLE link is wired back in.
+const MOCK_DEVICE = {
+  batteryPercent: 82,
+  firmwareVersion: "v0.1.0",
+  camera: "OV2640",
+  signal: "Strong",
+}
+
+type PhotoQuality = "low" | "medium" | "high"
+
+type SegmentedOption<T extends string> = {
+  value: T
+  label: string
+}
+
+type SegmentedProps<T extends string> = {
+  value: T
+  onChange: (value: T) => void
+  options: SegmentedOption<T>[]
+  "aria-label": string
+}
+
+function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+  "aria-label": ariaLabel,
+}: SegmentedProps<T>) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={ariaLabel}
+      className="flex w-fit rounded-lg bg-muted p-0.5"
+    >
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={value === option.value}
+          onClick={() => onChange(option.value)}
+          className={cn(
+            "rounded-md px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+            value === option.value
+              ? "bg-background text-foreground shadow-sm ring-1 ring-foreground/10"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+type StatTileProps = {
+  icon: React.ReactNode
+  label: string
+  value: string
+  children?: React.ReactNode
+}
+
+function StatTile({ icon, label, value, children }: StatTileProps) {
+  return (
+    <Card size="sm" className="gap-2">
+      <CardContent className="flex flex-col gap-2">
+        <div className="flex items-center gap-1.5 text-muted-foreground">
+          {icon}
+          <span className="text-xs font-medium">{label}</span>
+        </div>
+        <span className="font-heading text-lg leading-none font-semibold">
+          {value}
+        </span>
+        {children}
+      </CardContent>
+    </Card>
+  )
+}
+
+type SettingRowProps = {
+  icon: React.ReactNode
+  title: string
+  description: string
+  children?: React.ReactNode
+}
+
+function SettingRow({ icon, title, description, children }: SettingRowProps) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+      <div className="flex items-center gap-3">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground [&_svg]:size-4">
+          {icon}
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium">{title}</span>
+          <span className="text-xs text-muted-foreground">{description}</span>
+        </div>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+type MainPageProps = {
+  onDisconnect: () => void
+}
+
+export function MainPage({ onDisconnect }: MainPageProps) {
+  const { theme, setTheme } = useTheme()
+  const [volume, setVolume] = React.useState(70)
+  const [autoDescribe, setAutoDescribe] = React.useState(true)
+  const [connectionSounds, setConnectionSounds] = React.useState(true)
+  const [photoQuality, setPhotoQuality] = React.useState<PhotoQuality>("medium")
+
+  return (
+    <div className="min-h-svh bg-background">
+      <header className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur">
+        <div className="mx-auto flex h-14 w-full max-w-2xl items-center justify-between px-4">
+          <div className="flex items-center gap-2">
+            <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
+              <GlassesIcon className="size-4" />
+            </div>
+            <span className="font-heading text-sm font-medium tracking-tight">
+              Bonsai
+            </span>
+          </div>
+          <Badge variant="success">
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+              <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+            </span>
+            Connected
+          </Badge>
+        </div>
+      </header>
+
+      <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-6 pb-12">
+        <section className="flex flex-col items-center">
+          <div className="h-60 w-full sm:h-72">
+            <React.Suspense
+              fallback={
+                <div className="flex h-full items-center justify-center">
+                  <Spinner className="size-6 text-muted-foreground" />
+                </div>
+              }
+            >
+              <GlassesViewer />
+            </React.Suspense>
+          </div>
+          <span className="font-heading text-lg font-semibold tracking-tight">
+            Bonsai Glasses
+          </span>
+          <span className="text-xs text-muted-foreground">
+            Rev A prototype
+          </span>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <h2 className="font-heading text-sm font-medium text-muted-foreground">
+            Device
+          </h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatTile
+              icon={<BatteryMediumIcon className="size-3.5" />}
+              label="Battery"
+              value={`${MOCK_DEVICE.batteryPercent}%`}
+            >
+              <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary"
+                  style={{ width: `${MOCK_DEVICE.batteryPercent}%` }}
+                />
+              </div>
+            </StatTile>
+            <StatTile
+              icon={<CpuIcon className="size-3.5" />}
+              label="Firmware"
+              value={MOCK_DEVICE.firmwareVersion}
+            />
+            <StatTile
+              icon={<CameraIcon className="size-3.5" />}
+              label="Camera"
+              value={MOCK_DEVICE.camera}
+            />
+            <StatTile
+              icon={<SignalIcon className="size-3.5" />}
+              label="Signal"
+              value={MOCK_DEVICE.signal}
+            />
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <h2 className="font-heading text-sm font-medium text-muted-foreground">
+            Settings
+          </h2>
+          <Card>
+            <CardHeader className="border-b">
+              <CardTitle>Glasses</CardTitle>
+              <CardDescription>
+                How your glasses capture and describe the world.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col divide-y divide-border/60">
+              <div className="flex flex-col gap-1 py-3 first:pt-0">
+                <SettingRow
+                  icon={<Volume2Icon />}
+                  title="Speaker volume"
+                  description="Loudness of spoken descriptions."
+                >
+                  <span className="text-sm font-medium tabular-nums text-muted-foreground">
+                    {volume}%
+                  </span>
+                </SettingRow>
+                <Slider
+                  aria-label="Speaker volume"
+                  min={0}
+                  max={100}
+                  value={volume}
+                  onValueChange={(value) =>
+                    setVolume(Array.isArray(value) ? value[0] : value)
+                  }
+                />
+              </div>
+              <SettingRow
+                icon={<SparklesIcon />}
+                title="Auto describe"
+                description="Speak a description right after each photo."
+              >
+                <Switch
+                  checked={autoDescribe}
+                  onCheckedChange={setAutoDescribe}
+                  aria-label="Auto describe"
+                />
+              </SettingRow>
+              <SettingRow
+                icon={<BellIcon />}
+                title="Connection sounds"
+                description="Play a chime when the glasses connect."
+              >
+                <Switch
+                  checked={connectionSounds}
+                  onCheckedChange={setConnectionSounds}
+                  aria-label="Connection sounds"
+                />
+              </SettingRow>
+              <SettingRow
+                icon={<CameraIcon />}
+                title="Photo quality"
+                description="Higher quality takes longer to send."
+              >
+                <Segmented
+                  aria-label="Photo quality"
+                  value={photoQuality}
+                  onChange={setPhotoQuality}
+                  options={[
+                    { value: "low", label: "Low" },
+                    { value: "medium", label: "Med" },
+                    { value: "high", label: "High" },
+                  ]}
+                />
+              </SettingRow>
+              <SettingRow
+                icon={
+                  theme === "dark" ? (
+                    <MoonIcon />
+                  ) : theme === "light" ? (
+                    <SunIcon />
+                  ) : (
+                    <SunMoonIcon />
+                  )
+                }
+                title="Appearance"
+                description="Theme for this app."
+              >
+                <Segmented
+                  aria-label="Appearance"
+                  value={theme}
+                  onChange={setTheme}
+                  options={[
+                    { value: "light", label: "Light" },
+                    { value: "dark", label: "Dark" },
+                    { value: "system", label: "Auto" },
+                  ]}
+                />
+              </SettingRow>
+            </CardContent>
+            <CardFooter>
+              <Button
+                variant="destructive"
+                className="w-full"
+                onClick={onDisconnect}
+              >
+                <UnplugIcon data-icon="inline-start" />
+                Disconnect glasses
+              </Button>
+            </CardFooter>
+          </Card>
+        </section>
+      </main>
+    </div>
+  )
+}

@@ -2,3 +2,8 @@ hardware/bonsai_pcb/*
 *.env
 !hardware/bonsai_pcb/*.step
 !hardware/bonsai_pcb/*.zip
+!hardware/bonsai_pcb/*.kicad_pcb
+!hardware/bonsai_pcb/*.kicad_pro
+!hardware/bonsai_pcb/*.kicad_sch
+!hardware/bonsai_pcb/*.gbrjob
+node_modules/
