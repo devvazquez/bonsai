@@ -110,7 +110,7 @@ function StatTile({ icon, label, value, trailing, children }: StatTileProps) {
           <span className="text-xs font-medium">{label}</span>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <span className="font-heading text-lg leading-none font-semibold">
+          <span className="text-lg leading-none font-semibold tracking-tight">
             {value}
           </span>
           {trailing}

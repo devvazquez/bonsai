@@ -1,9 +1,5 @@
 import * as React from "react"
-import {
-  BluetoothIcon,
-  BluetoothSearchingIcon,
-  CheckIcon,
-} from "lucide-react"
+import { BluetoothSearchingIcon } from "lucide-react"
 
 import { Enso, EnsoMark } from "@/components/enso"
 import { Button } from "@/components/ui/button"
@@ -53,26 +49,7 @@ export function ScanningScreen({ onConnected }: ScanningScreenProps) {
                 ? "text-primary"
                 : "text-muted-foreground/60"
           )}
-        >
-          <div
-            className={cn(
-              "transition-colors duration-500",
-              isConnected
-                ? "text-emerald-500"
-                : isScanning
-                  ? "text-primary"
-                  : "text-muted-foreground"
-            )}
-          >
-            {isConnected ? (
-              <CheckIcon className="size-10" />
-            ) : isScanning ? (
-              <BluetoothSearchingIcon className="size-10" />
-            ) : (
-              <BluetoothIcon className="size-10" />
-            )}
-          </div>
-        </Enso>
+        />
 
         <div className="flex flex-col gap-2">
           <h1 className="font-heading text-xl font-semibold tracking-tight">

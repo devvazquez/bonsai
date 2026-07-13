@@ -12,9 +12,7 @@ function SplashScreen() {
     <div className="flex min-h-svh flex-col items-center justify-center gap-8">
       <div className="animate-in duration-700 fade-in zoom-in-95 motion-reduce:animate-none">
         <Enso state="open" className="size-36 text-primary">
-          <span className="font-heading text-xl font-semibold tracking-tight">
-            Bonsai
-          </span>
+          <span className="font-heading text-2xl font-medium">Bonsai</span>
         </Enso>
       </div>
       <Spinner className="size-5 text-muted-foreground" />
