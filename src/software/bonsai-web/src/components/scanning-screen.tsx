@@ -1,13 +1,14 @@
 import * as React from "react"
 import {
+  BluetoothIcon,
   BluetoothSearchingIcon,
-  CircleCheckIcon,
-  GlassesIcon,
+  CheckIcon,
 } from "lucide-react"
 
-import { Enso } from "@/components/enso"
+import { Enso, EnsoMark } from "@/components/enso"
 import { Button } from "@/components/ui/button"
 import { useGlassesConnection } from "@/hooks/use-glasses-connection"
+import { useI18n } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 
 const CONNECTED_HOLD_MS = 900
@@ -18,6 +19,7 @@ type ScanningScreenProps = {
 
 export function ScanningScreen({ onConnected }: ScanningScreenProps) {
   const { state, scan } = useGlassesConnection()
+  const { t } = useI18n()
 
   React.useEffect(() => {
     if (state.status !== "connected") {
@@ -34,9 +36,7 @@ export function ScanningScreen({ onConnected }: ScanningScreenProps) {
   return (
     <div className="mx-auto flex min-h-svh w-full max-w-md flex-col items-center justify-between gap-8 p-6">
       <div className="flex items-center gap-2 pt-2">
-        <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <GlassesIcon className="size-4" />
-        </div>
+        <EnsoMark className="size-6 text-primary" />
         <span className="font-heading text-sm font-medium tracking-tight">
           Bonsai
         </span>
@@ -51,21 +51,25 @@ export function ScanningScreen({ onConnected }: ScanningScreenProps) {
               ? "text-emerald-500"
               : isScanning
                 ? "text-primary"
-                : "text-muted-foreground/50"
+                : "text-muted-foreground/60"
           )}
         >
           <div
             className={cn(
-              "flex size-16 items-center justify-center rounded-2xl shadow-lg transition-colors duration-500",
+              "transition-colors duration-500",
               isConnected
-                ? "bg-emerald-500 text-white"
-                : "bg-primary text-primary-foreground"
+                ? "text-emerald-500"
+                : isScanning
+                  ? "text-primary"
+                  : "text-muted-foreground"
             )}
           >
             {isConnected ? (
-              <CircleCheckIcon className="size-8" />
+              <CheckIcon className="size-10" />
+            ) : isScanning ? (
+              <BluetoothSearchingIcon className="size-10" />
             ) : (
-              <GlassesIcon className="size-8" />
+              <BluetoothIcon className="size-10" />
             )}
           </div>
         </Enso>
@@ -73,17 +77,17 @@ export function ScanningScreen({ onConnected }: ScanningScreenProps) {
         <div className="flex flex-col gap-2">
           <h1 className="font-heading text-xl font-semibold tracking-tight">
             {isConnected
-              ? "Connected"
+              ? t("scan.titleConnected")
               : isScanning
-                ? "Looking for your glasses…"
-                : "Connect your glasses"}
+                ? t("scan.titleScanning")
+                : t("scan.titleIdle")}
           </h1>
           <p className="mx-auto max-w-xs text-sm text-balance text-muted-foreground">
             {isConnected && state.status === "connected"
-              ? `${state.deviceName} is ready to go.`
+              ? t("scan.bodyConnected", { name: state.deviceName })
               : isScanning
-                ? "Hang tight while we find your Bonsai glasses nearby."
-                : "Turn on your Bonsai glasses and keep them close to this device."}
+                ? t("scan.bodyScanning")
+                : t("scan.bodyIdle")}
           </p>
         </div>
       </div>
@@ -99,11 +103,10 @@ export function ScanningScreen({ onConnected }: ScanningScreenProps) {
           disabled={isScanning}
         >
           <BluetoothSearchingIcon data-icon="inline-start" className="size-5" />
-          {isScanning ? "Scanning…" : "Scan for glasses"}
+          {isScanning ? t("scan.ctaScanning") : t("scan.cta")}
         </Button>
         <p className="max-w-xs text-center text-xs text-muted-foreground/70">
-          Bluetooth is off in this build — the connection is simulated for
-          debugging.
+          {t("scan.note")}
         </p>
       </div>
     </div>

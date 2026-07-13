@@ -4,7 +4,7 @@ import {
   BellIcon,
   CameraIcon,
   CpuIcon,
-  GlassesIcon,
+  LanguagesIcon,
   MoonIcon,
   SignalIcon,
   SparklesIcon,
@@ -14,7 +14,7 @@ import {
   Volume2Icon,
 } from "lucide-react"
 
-import { EnsoArc } from "@/components/enso"
+import { EnsoArc, EnsoMark } from "@/components/enso"
 import { useTheme } from "@/components/theme-provider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -29,6 +29,7 @@ import {
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
+import { useI18n, type Lang } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
 
 // Lazy-loaded so three.js stays out of the initial bundle.
@@ -43,7 +44,6 @@ const MOCK_DEVICE = {
   batteryPercent: 82,
   firmwareVersion: "v0.1.0",
   camera: "OV2640",
-  signal: "Strong",
 }
 
 type PhotoQuality = "low" | "medium" | "high"
@@ -172,6 +172,7 @@ type MainPageProps = {
 
 export function MainPage({ onDisconnect }: MainPageProps) {
   const { theme, setTheme } = useTheme()
+  const { lang, setLang, t } = useI18n()
   const [volume, setVolume] = React.useState(70)
   const [autoDescribe, setAutoDescribe] = React.useState(true)
   const [connectionSounds, setConnectionSounds] = React.useState(true)
@@ -182,9 +183,7 @@ export function MainPage({ onDisconnect }: MainPageProps) {
       <header className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-md items-center justify-between px-4">
           <div className="flex items-center gap-2">
-            <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <GlassesIcon className="size-4" />
-            </div>
+            <EnsoMark className="size-6 text-primary" />
             <span className="font-heading text-sm font-medium tracking-tight">
               Bonsai
             </span>
@@ -194,7 +193,7 @@ export function MainPage({ onDisconnect }: MainPageProps) {
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60 motion-reduce:animate-none" />
               <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
             </span>
-            Connected
+            {t("main.connected")}
           </Badge>
         </div>
       </header>
@@ -213,21 +212,21 @@ export function MainPage({ onDisconnect }: MainPageProps) {
             </React.Suspense>
           </div>
           <span className="font-heading text-lg font-semibold tracking-tight">
-            Bonsai Glasses
+            {t("main.deviceName")}
           </span>
           <span className="mt-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
-            Rev A prototype
+            {t("main.revTag")}
           </span>
         </RiseIn>
 
         <RiseIn delayMs={100} className="flex flex-col gap-3">
           <h2 className="font-heading text-sm font-medium text-muted-foreground">
-            Vitals
+            {t("main.vitals")}
           </h2>
           <div className="grid grid-cols-2 gap-3">
             <StatTile
               icon={<BatteryMediumIcon className="size-3.5" />}
-              label="Battery"
+              label={t("main.battery")}
               value={`${MOCK_DEVICE.batteryPercent}%`}
               trailing={
                 <EnsoArc
@@ -238,46 +237,44 @@ export function MainPage({ onDisconnect }: MainPageProps) {
             />
             <StatTile
               icon={<CpuIcon className="size-3.5" />}
-              label="Firmware"
+              label={t("main.firmware")}
               value={MOCK_DEVICE.firmwareVersion}
             />
             <StatTile
               icon={<CameraIcon className="size-3.5" />}
-              label="Camera"
+              label={t("main.camera")}
               value={MOCK_DEVICE.camera}
             />
             <StatTile
               icon={<SignalIcon className="size-3.5" />}
-              label="Signal"
-              value={MOCK_DEVICE.signal}
+              label={t("main.signal")}
+              value={t("main.signalStrong")}
             />
           </div>
         </RiseIn>
 
         <RiseIn delayMs={200} className="flex flex-col gap-3">
           <h2 className="font-heading text-sm font-medium text-muted-foreground">
-            Settings
+            {t("main.settings")}
           </h2>
           <Card>
             <CardHeader className="border-b">
-              <CardTitle>Glasses</CardTitle>
-              <CardDescription>
-                How your glasses capture and describe the world.
-              </CardDescription>
+              <CardTitle>{t("device.title")}</CardTitle>
+              <CardDescription>{t("device.description")}</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col divide-y divide-border/60">
               <div className="flex flex-col gap-1 py-3 first:pt-0">
                 <SettingRow
                   icon={<Volume2Icon />}
-                  title="Speaker volume"
-                  description="Loudness of spoken descriptions."
+                  title={t("volume.title")}
+                  description={t("volume.description")}
                 >
                   <span className="text-sm font-medium tabular-nums text-muted-foreground">
                     {volume}%
                   </span>
                 </SettingRow>
                 <Slider
-                  aria-label="Speaker volume"
+                  aria-label={t("volume.title")}
                   min={0}
                   max={100}
                   value={volume}
@@ -288,39 +285,39 @@ export function MainPage({ onDisconnect }: MainPageProps) {
               </div>
               <SettingRow
                 icon={<SparklesIcon />}
-                title="Auto describe"
-                description="Speak a description right after each photo."
+                title={t("autoDescribe.title")}
+                description={t("autoDescribe.description")}
               >
                 <Switch
                   checked={autoDescribe}
                   onCheckedChange={setAutoDescribe}
-                  aria-label="Auto describe"
+                  aria-label={t("autoDescribe.title")}
                 />
               </SettingRow>
               <SettingRow
                 icon={<BellIcon />}
-                title="Connection sounds"
-                description="Play a chime when the glasses connect."
+                title={t("sounds.title")}
+                description={t("sounds.description")}
               >
                 <Switch
                   checked={connectionSounds}
                   onCheckedChange={setConnectionSounds}
-                  aria-label="Connection sounds"
+                  aria-label={t("sounds.title")}
                 />
               </SettingRow>
               <SettingRow
                 icon={<CameraIcon />}
-                title="Photo quality"
-                description="Higher quality takes longer to send."
+                title={t("quality.title")}
+                description={t("quality.description")}
               >
                 <Segmented
-                  aria-label="Photo quality"
+                  aria-label={t("quality.title")}
                   value={photoQuality}
                   onChange={setPhotoQuality}
                   options={[
-                    { value: "low", label: "Low" },
-                    { value: "medium", label: "Med" },
-                    { value: "high", label: "High" },
+                    { value: "low", label: t("quality.low") },
+                    { value: "medium", label: t("quality.medium") },
+                    { value: "high", label: t("quality.high") },
                   ]}
                 />
               </SettingRow>
@@ -334,17 +331,33 @@ export function MainPage({ onDisconnect }: MainPageProps) {
                     <SunMoonIcon />
                   )
                 }
-                title="Appearance"
-                description="Theme for this app."
+                title={t("appearance.title")}
+                description={t("appearance.description")}
               >
                 <Segmented
-                  aria-label="Appearance"
+                  aria-label={t("appearance.title")}
                   value={theme}
                   onChange={setTheme}
                   options={[
-                    { value: "light", label: "Light" },
-                    { value: "dark", label: "Dark" },
-                    { value: "system", label: "Auto" },
+                    { value: "light", label: t("theme.light") },
+                    { value: "dark", label: t("theme.dark") },
+                    { value: "system", label: t("theme.auto") },
+                  ]}
+                />
+              </SettingRow>
+              <SettingRow
+                icon={<LanguagesIcon />}
+                title={t("language.title")}
+                description={t("language.description")}
+              >
+                <Segmented<Lang>
+                  aria-label={t("language.title")}
+                  value={lang}
+                  onChange={setLang}
+                  options={[
+                    { value: "en", label: "EN" },
+                    { value: "es", label: "ES" },
+                    { value: "ca", label: "CA" },
                   ]}
                 />
               </SettingRow>
@@ -356,7 +369,7 @@ export function MainPage({ onDisconnect }: MainPageProps) {
                 onClick={onDisconnect}
               >
                 <UnplugIcon data-icon="inline-start" />
-                Disconnect glasses
+                {t("disconnect")}
               </Button>
             </CardFooter>
           </Card>
