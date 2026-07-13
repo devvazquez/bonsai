@@ -14,6 +14,7 @@ import {
   Volume2Icon,
 } from "lucide-react"
 
+import { EnsoArc } from "@/components/enso"
 import { useTheme } from "@/components/theme-provider"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -79,7 +80,7 @@ function Segmented<T extends string>({
           aria-checked={value === option.value}
           onClick={() => onChange(option.value)}
           className={cn(
-            "rounded-md px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+            "min-h-9 rounded-md px-3 py-1.5 text-xs font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
             value === option.value
               ? "bg-background text-foreground shadow-sm ring-1 ring-foreground/10"
               : "text-muted-foreground hover:text-foreground"
@@ -96,10 +97,11 @@ type StatTileProps = {
   icon: React.ReactNode
   label: string
   value: string
+  trailing?: React.ReactNode
   children?: React.ReactNode
 }
 
-function StatTile({ icon, label, value, children }: StatTileProps) {
+function StatTile({ icon, label, value, trailing, children }: StatTileProps) {
   return (
     <Card size="sm" className="gap-2">
       <CardContent className="flex flex-col gap-2">
@@ -107,9 +109,12 @@ function StatTile({ icon, label, value, children }: StatTileProps) {
           {icon}
           <span className="text-xs font-medium">{label}</span>
         </div>
-        <span className="font-heading text-lg leading-none font-semibold">
-          {value}
-        </span>
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-heading text-lg leading-none font-semibold">
+            {value}
+          </span>
+          {trailing}
+        </div>
         {children}
       </CardContent>
     </Card>
@@ -125,7 +130,7 @@ type SettingRowProps = {
 
 function SettingRow({ icon, title, description, children }: SettingRowProps) {
   return (
-    <div className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
+    <div className="flex min-h-11 items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
       <div className="flex items-center gap-3">
         <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground [&_svg]:size-4">
           {icon}
@@ -135,6 +140,27 @@ function SettingRow({ icon, title, description, children }: SettingRowProps) {
           <span className="text-xs text-muted-foreground">{description}</span>
         </div>
       </div>
+      {children}
+    </div>
+  )
+}
+
+type RiseInProps = {
+  delayMs?: number
+  className?: string
+  children: React.ReactNode
+}
+
+// One-time load-in: each section rises into place, slightly after the last.
+function RiseIn({ delayMs = 0, className, children }: RiseInProps) {
+  return (
+    <div
+      className={cn(
+        "animate-in duration-500 fill-mode-backwards fade-in slide-in-from-bottom-2 motion-reduce:animate-none",
+        className
+      )}
+      style={{ animationDelay: `${delayMs}ms` }}
+    >
       {children}
     </div>
   )
@@ -154,7 +180,7 @@ export function MainPage({ onDisconnect }: MainPageProps) {
   return (
     <div className="min-h-svh bg-background">
       <header className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur">
-        <div className="mx-auto flex h-14 w-full max-w-2xl items-center justify-between px-4">
+        <div className="mx-auto flex h-14 w-full max-w-md items-center justify-between px-4">
           <div className="flex items-center gap-2">
             <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
               <GlassesIcon className="size-4" />
@@ -165,7 +191,7 @@ export function MainPage({ onDisconnect }: MainPageProps) {
           </div>
           <Badge variant="success">
             <span className="relative flex size-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60 motion-reduce:animate-none" />
               <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
             </span>
             Connected
@@ -173,9 +199,9 @@ export function MainPage({ onDisconnect }: MainPageProps) {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-6 pb-12">
-        <section className="flex flex-col items-center">
-          <div className="h-60 w-full sm:h-72">
+      <main className="mx-auto flex w-full max-w-md flex-col gap-6 px-4 py-6 pb-12">
+        <RiseIn className="flex flex-col items-center">
+          <div className="h-60 w-full">
             <React.Suspense
               fallback={
                 <div className="flex h-full items-center justify-center">
@@ -189,28 +215,27 @@ export function MainPage({ onDisconnect }: MainPageProps) {
           <span className="font-heading text-lg font-semibold tracking-tight">
             Bonsai Glasses
           </span>
-          <span className="text-xs text-muted-foreground">
+          <span className="mt-1 text-[11px] font-medium tracking-widest text-muted-foreground uppercase">
             Rev A prototype
           </span>
-        </section>
+        </RiseIn>
 
-        <section className="flex flex-col gap-3">
+        <RiseIn delayMs={100} className="flex flex-col gap-3">
           <h2 className="font-heading text-sm font-medium text-muted-foreground">
-            Device
+            Vitals
           </h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3">
             <StatTile
               icon={<BatteryMediumIcon className="size-3.5" />}
               label="Battery"
               value={`${MOCK_DEVICE.batteryPercent}%`}
-            >
-              <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary"
-                  style={{ width: `${MOCK_DEVICE.batteryPercent}%` }}
+              trailing={
+                <EnsoArc
+                  value={MOCK_DEVICE.batteryPercent}
+                  className="size-9 text-primary"
                 />
-              </div>
-            </StatTile>
+              }
+            />
             <StatTile
               icon={<CpuIcon className="size-3.5" />}
               label="Firmware"
@@ -227,9 +252,9 @@ export function MainPage({ onDisconnect }: MainPageProps) {
               value={MOCK_DEVICE.signal}
             />
           </div>
-        </section>
+        </RiseIn>
 
-        <section className="flex flex-col gap-3">
+        <RiseIn delayMs={200} className="flex flex-col gap-3">
           <h2 className="font-heading text-sm font-medium text-muted-foreground">
             Settings
           </h2>
@@ -327,7 +352,7 @@ export function MainPage({ onDisconnect }: MainPageProps) {
             <CardFooter>
               <Button
                 variant="destructive"
-                className="w-full"
+                className="h-12 w-full"
                 onClick={onDisconnect}
               >
                 <UnplugIcon data-icon="inline-start" />
@@ -335,7 +360,7 @@ export function MainPage({ onDisconnect }: MainPageProps) {
               </Button>
             </CardFooter>
           </Card>
-        </section>
+        </RiseIn>
       </main>
     </div>
   )

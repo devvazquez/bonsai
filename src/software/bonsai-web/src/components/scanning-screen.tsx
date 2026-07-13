@@ -5,6 +5,7 @@ import {
   GlassesIcon,
 } from "lucide-react"
 
+import { Enso } from "@/components/enso"
 import { Button } from "@/components/ui/button"
 import { useGlassesConnection } from "@/hooks/use-glasses-connection"
 import { cn } from "@/lib/utils"
@@ -31,7 +32,7 @@ export function ScanningScreen({ onConnected }: ScanningScreenProps) {
   const isConnected = state.status === "connected"
 
   return (
-    <div className="flex min-h-svh flex-col items-center justify-between gap-8 p-6">
+    <div className="mx-auto flex min-h-svh w-full max-w-md flex-col items-center justify-between gap-8 p-6">
       <div className="flex items-center gap-2 pt-2">
         <div className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
           <GlassesIcon className="size-4" />
@@ -42,16 +43,20 @@ export function ScanningScreen({ onConnected }: ScanningScreenProps) {
       </div>
 
       <div className="flex w-full max-w-sm flex-col items-center gap-8 text-center">
-        <div className="relative flex size-32 items-center justify-center">
-          {isScanning ? (
-            <>
-              <span className="absolute inset-0 animate-ping rounded-full bg-primary/10 animation-duration-[2s]" />
-              <span className="absolute inset-4 animate-ping rounded-full bg-primary/15 animation-duration-[2s] animation-delay-[400ms]" />
-            </>
-          ) : null}
+        <Enso
+          state={isConnected ? "closed" : isScanning ? "spinning" : "open"}
+          className={cn(
+            "size-40 transition-colors duration-500",
+            isConnected
+              ? "text-emerald-500"
+              : isScanning
+                ? "text-primary"
+                : "text-muted-foreground/50"
+          )}
+        >
           <div
             className={cn(
-              "relative flex size-16 items-center justify-center rounded-2xl shadow-lg transition-colors duration-500",
+              "flex size-16 items-center justify-center rounded-2xl shadow-lg transition-colors duration-500",
               isConnected
                 ? "bg-emerald-500 text-white"
                 : "bg-primary text-primary-foreground"
@@ -63,7 +68,7 @@ export function ScanningScreen({ onConnected }: ScanningScreenProps) {
               <GlassesIcon className="size-8" />
             )}
           </div>
-        </div>
+        </Enso>
 
         <div className="flex flex-col gap-2">
           <h1 className="font-heading text-xl font-semibold tracking-tight">
@@ -81,24 +86,26 @@ export function ScanningScreen({ onConnected }: ScanningScreenProps) {
                 : "Turn on your Bonsai glasses and keep them close to this device."}
           </p>
         </div>
-
-        {!isConnected ? (
-          <Button
-            size="lg"
-            className="w-full max-w-60"
-            onClick={scan}
-            disabled={isScanning}
-          >
-            <BluetoothSearchingIcon data-icon="inline-start" />
-            {isScanning ? "Scanning…" : "Scan for glasses"}
-          </Button>
-        ) : null}
       </div>
 
-      <p className="max-w-xs pb-2 text-center text-xs text-muted-foreground/70">
-        Bluetooth is disabled in this build — the connection is simulated for
-        debugging.
-      </p>
+      <div className="flex w-full max-w-sm flex-col items-center gap-4 pb-2">
+        <Button
+          size="lg"
+          className={cn(
+            "h-13 w-full rounded-full text-base",
+            isConnected && "invisible"
+          )}
+          onClick={scan}
+          disabled={isScanning}
+        >
+          <BluetoothSearchingIcon data-icon="inline-start" className="size-5" />
+          {isScanning ? "Scanning…" : "Scan for glasses"}
+        </Button>
+        <p className="max-w-xs text-center text-xs text-muted-foreground/70">
+          Bluetooth is off in this build — the connection is simulated for
+          debugging.
+        </p>
+      </div>
     </div>
   )
 }
