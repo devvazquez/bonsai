@@ -1,6 +1,8 @@
 Name,Purpose,Quantity,Total Cost (USD),Link,Distributor
-"3.7V Lipo Battery","Powering the device. ",,10.50,"https://www.aliexpress.us/item/3256808990377891.html","Aliexpress"
-"JST PH 2.0 Connector","Will be used to connect the battery to the pcb. (Color: Bent pin socket) (Pins: 2P)",,1.95,"https://www.aliexpress.us/item/3256807255498839.html","Aliexpress"
-"Seeed Studio XIAO ESP32S3 Sense","Tiny devboard with camera support, perfect for this project. (Color: ESP32S3 Sense Module)",,20.00,"https://es.aliexpress.com/item/1005005544221475.html","Aliexpress"
-"MAX98357A I2S Audio Amplifier","This amplifier will be used to drive the speakers since the esp32 doesnt have enough power to do it directly.",,1.68,"https://www.aliexpress.us/item/3256806817487911.html","Aliexpress"
-"75MM OV3660 120° Camera","Capturing the image for the esp32 to procces. It needs to have an extra large flex connector to reach the board. (Color: 120 Degrees GOOD)",,6.89,"https://es.aliexpress.com/item/1005009339247009.html","Aliexpress"
+3.7V Lipo Battery,Powering the device.,,10.50,https://www.aliexpress.us/item/3256808990377891.html,Aliexpress
+JST PH 2.0 Connector,"Connect battery to PCB (Bent pin socket, 2P)",,1.95,https://www.aliexpress.us/item/3256807255498839.html,Aliexpress
+Seeed Studio XIAO ESP32S3 Sense,Tiny devboard with camera support (ESP32S3 Sense Module),,20.00,https://es.aliexpress.com/item/1005005544221475.html,Aliexpress
+MAX98357A I2S Audio Amplifier,Drives the speakers since ESP32 lacks enough power directly,,1.68,https://www.aliexpress.us/item/3256812158409627.html,Aliexpress
+75MM OV3660 120° Camera,Captures image for ESP32 to process (120 Degrees GOOD),,6.89,https://es.aliexpress.com/item/1005009339247009.html,Aliexpress
+Push Button,Taking the photo,,2.95,https://www.aliexpress.us/item/3256804762387991.html,Aliexpress
+Small Speaker,Playing the TTS sound,,4.53,https://www.aliexpress.us/item/3256811556916339.html,Aliexpress

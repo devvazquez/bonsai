@@ -40,8 +40,8 @@
         "other_text_upright": false,
         "pads": {
           "drill": 0.0,
-          "height": 1.1,
-          "width": 2.5
+          "height": 2.5,
+          "width": 2.75
         },
         "silk_line_width": 0.1,
         "silk_text_italic": false,
@@ -54,7 +54,12 @@
         }
       },
       "diff_pair_dimensions": [],
-      "drc_exclusions": [],
+      "drc_exclusions": [
+        [
+          "unconnected_items|167650000|94750000|F.Cu|4|13d7451b-4c74-4bf0-bcee-75f9558dca97|6603da5e-0c0d-40a7-be13-0862a113e340",
+          "Button pins internally connected"
+        ]
+      ],
       "meta": {
         "filename": "board_design_settings.json",
         "version": 2
@@ -641,7 +646,7 @@
         "uuid": "63dd983f-aef7-4aad-ad7a-5addee823dfa"
       }
     ],
-    "used_designators": "U2,J2-5,SW1-2,TP1",
+    "used_designators": "J2-4,#PWR2",
     "variants": []
   },
   "sheets": [
