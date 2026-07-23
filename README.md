@@ -28,5 +28,6 @@ Bonsai-Glasses/
 | Seeed Studio XIAO ESP32S3 Sense | Tiny devboard with camera support (ESP32S3 Sense Module) | | $20.00 | [Buy](https://es.aliexpress.com/item/1005005544221475.html) | Aliexpress |
 | MAX98357A I2S Audio Amplifier | Drives the speakers since ESP32 lacks enough power directly | | $1.68 | [Buy](https://www.aliexpress.us/item/3256812158409627.html) | Aliexpress |
 | 75MM OV3660 120° Camera | Captures image for ESP32 to process (120 Degrees GOOD) | | $6.89 | [Buy](https://es.aliexpress.com/item/1005009339247009.html) | Aliexpress |
-
+| Push Button | Taking the photo | | 2.95$ | [Buy](https://www.aliexpress.us/item/3256804762387991.html) | Aliexpress |
+| Small Speaker | Playing the TTS sound | | 4.53$ | [Buy](https://www.aliexpress.us/item/3256811556916339.html) | Aliexpress |
 ![Cart Image](https://raw.githubusercontent.com/devvazquez/bonsai/refs/heads/main/assets/cart-image.png)
