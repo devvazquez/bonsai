@@ -37,4 +37,5 @@ From default, the button on the device takes a photo, and Artificial Inteligence
 | 75MM OV3660 120° Camera | Captures image for ESP32 to process (120 Degrees GOOD) | | $6.89 | [Buy](https://es.aliexpress.com/item/1005009339247009.html) | Aliexpress |
 | Push Button | Taking the photo | | 2.95$ | [Buy](https://www.aliexpress.us/item/3256804762387991.html) | Aliexpress |
 | Small Speaker | Playing the TTS sound | | 4.53$ | [Buy](https://www.aliexpress.us/item/3256811556916339.html) | Aliexpress |
+| PCB | Holding all the components together | | 3.58$ | [Buy](https://jlcpcb.com/) | JLPCB |
 <img width="2560" height="2880" alt="image" src="https://github.com/user-attachments/assets/f058289d-7f94-4759-a860-e042424b4278" />
