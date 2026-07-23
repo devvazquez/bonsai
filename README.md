@@ -1,16 +1,12 @@
 # Bonsai
 The main repository containing all the files involved in the creation of this smart device, such as cad files, code, designs...
 
-<img height="720" alt="IMG_3797" src="https://github.com/user-attachments/assets/816af56a-fea3-4214-b69e-b98444782122" />
-<img width="1280" height="640" alt="22877814-e29b-4794-9276-75eacdae1a95" src="https://github.com/user-attachments/assets/1a2a9ede-5398-45c5-bfc8-b07443b2d9db" />
-<img width="669" height="351" alt="{5F14CA35-08FD-4233-AC37-D65E22D8F3A3}" src="https://github.com/user-attachments/assets/e279554b-d24b-49e6-b1a2-0b9cd7bb613b" />
+<img height="400" alt="IMG_3797" src="https://github.com/user-attachments/assets/816af56a-fea3-4214-b69e-b98444782122" />
+<img height="400" alt="22877814-e29b-4794-9276-75eacdae1a95" src="https://github.com/user-attachments/assets/1a2a9ede-5398-45c5-bfc8-b07443b2d9db" />
+<img height="400" alt="{5F14CA35-08FD-4233-AC37-D65E22D8F3A3}" src="https://github.com/user-attachments/assets/e279554b-d24b-49e6-b1a2-0b9cd7bb613b" />
 
 ## Motivation for the project
 I've always wanted to do a hardware project like this, involving a camera. And I love the idea of being able to connect AI with real-world data, so this project is perfect!
-
-## How it works (WIP)
-From default, the button on the device takes a photo, and Artificial Inteligence describes it and plays the generated audio to the user via the speaker. With the webapp, this button can be changed to other functions like taking videos. In the webapp itself, you will be able to download all the videos and photos taken by the device.
-<img width="1170" height="2532" alt="image" src="https://github.com/user-attachments/assets/432044aa-8b56-49b3-8801-15662b4bfc82" />
 
 ## Repository Structure
 
@@ -25,6 +21,11 @@ Bonsai-Glasses/
 │   └── bonsai_pcb/     # PCB schematics and board layouts
 └── assets/             # Images, logos, and other design assets
 ```
+
+## How it works (WIP)
+From default, the button on the device takes a photo, and Artificial Inteligence describes it and plays the generated audio to the user via the speaker. With the webapp, this button can be changed to other functions like taking videos. In the webapp itself, you will be able to download all the videos and photos taken by the device.
+
+<img height="720" alt="image" src="https://github.com/user-attachments/assets/432044aa-8b56-49b3-8801-15662b4bfc82" />
 
 ## Bill of Materials
 | Name | Purpose | Quantity | Total Cost (USD) | Link | Distributor |
