@@ -54,12 +54,7 @@
         }
       },
       "diff_pair_dimensions": [],
-      "drc_exclusions": [
-        [
-          "unconnected_items|167650000|94750000|F.Cu|4|13d7451b-4c74-4bf0-bcee-75f9558dca97|6603da5e-0c0d-40a7-be13-0862a113e340",
-          "Button pins internally connected"
-        ]
-      ],
+      "drc_exclusions": [],
       "meta": {
         "filename": "board_design_settings.json",
         "version": 2
@@ -514,7 +509,7 @@
     "last_paths": {
       "idf": "",
       "netlist": "./",
-      "plot": "gerbers/",
+      "plot": "output/",
       "specctra_dsn": "",
       "vrml": ""
     },
@@ -646,7 +641,7 @@
         "uuid": "63dd983f-aef7-4aad-ad7a-5addee823dfa"
       }
     ],
-    "used_designators": "J2-4,#PWR2",
+    "used_designators": "",
     "variants": []
   },
   "sheets": [
