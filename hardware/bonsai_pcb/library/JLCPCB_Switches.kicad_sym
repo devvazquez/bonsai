@@ -1,0 +1,139 @@
+(kicad_symbol_lib
+  (version 20211014)
+  (generator https://github.com/uPesy/easyeda2kicad.py)
+
+    (symbol "TS-1102N-5516"
+    (in_bom yes)
+    (on_board yes)
+    (property
+      "Reference"
+      "SW"
+      
+      (at 0 5.08 0)
+      (effects (font (size 1.27 1.27) ) )
+    )
+    (property
+      "Value"
+      "TS-1102N-5516"
+      
+      (at 0 -7.62 0)
+      (effects (font (size 1.27 1.27) ) )
+    )
+    (property
+      "Footprint"
+      "JLCPCB_Switches:SW-TH_TS-1102N-5516"
+      
+      (at 0 -10.16 0)
+      (effects (font (size 1.27 1.27) ) hide)
+    )
+    (property
+      "Datasheet"
+      "https://lcsc.com/product-detail/Tactile-Switches_SOFNG-TS-1102N-5516_C596251.html"
+      
+      (at 0 -12.70 0)
+      (effects (font (size 1.27 1.27) ) hide)
+    )
+    (property
+      "Manufacturer"
+      "SOFNG(硕方)"
+      
+      (at 0 -15.24 0)
+      (effects (font (size 1.27 1.27) ) hide)
+    )
+    (property
+      "MPN"
+      "TS-1102N-5516"
+      
+      (at 0 -17.78 0)
+      (effects (font (size 1.27 1.27) ) hide)
+    )
+    (property
+      "LCSC Part"
+      "C596251"
+      
+      (at 0 -20.32 0)
+      (effects (font (size 1.27 1.27) ) hide)
+    )
+    (property
+      "ki_keywords"
+      "Tactile Switches"
+      
+      (at 0 -22.86 0)
+      (effects (font (size 1.27 1.27) ) hide)
+    )
+    (symbol "TS-1102N-5516_0_1"
+      (circle
+        (center -2.54 -0.00)
+        (radius 0.51)
+        (stroke (width 0) (type default))
+        (fill (type none))
+      )
+      (circle
+        (center 2.54 -0.00)
+        (radius 0.51)
+        (stroke (width 0) (type default))
+        (fill (type none))
+      )
+      (polyline
+        (pts
+          (xy -2.79 1.52) (xy 2.79 1.52)
+        )
+        (stroke (width 0) (type default))
+        (fill (type none))
+      )
+      (polyline
+        (pts
+          (xy 0.00 1.52) (xy 0.00 2.79)
+        )
+        (stroke (width 0) (type default))
+        (fill (type none))
+      )
+      (polyline
+        (pts
+          (xy -2.54 -2.54) (xy 3.05 -2.54)
+        )
+        (stroke (width 0) (type default))
+        (fill (type none))
+      )
+      (pin unspecified line
+        (at -7.62 -2.54 0)
+        (length 5.08)
+        (name "3" (effects (font (size 1.27 1.27))))
+        (number "3" (effects (font (size 1.27 1.27))))
+      )
+      (pin unspecified line
+        (at -7.62 -0.00 0)
+        (length 5.08)
+        (name "1" (effects (font (size 1.27 1.27))))
+        (number "1" (effects (font (size 1.27 1.27))))
+      )
+      (pin unspecified line
+        (at 7.62 -0.00 180)
+        (length 5.08)
+        (name "2" (effects (font (size 1.27 1.27))))
+        (number "2" (effects (font (size 1.27 1.27))))
+      )
+      (pin unspecified line
+        (at 7.62 -2.54 180)
+        (length 5.08)
+        (name "4" (effects (font (size 1.27 1.27))))
+        (number "4" (effects (font (size 1.27 1.27))))
+      )
+    )
+    (property "Description" "-35℃~+75℃ 1.6N 100,000 cycles 24V 25mA 5.5mm 6mm 6mm Black Rectangular Button Right Angle SPST" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Mounting Style" "Lying" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Operating Temperature" "-35℃~+75℃" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Contact Current" "25mA" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Switch Width" "6mm" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Actuator Style" "Rectangle button" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Switch Height" "5.5mm" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Circuit" "SPST" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Mechanical Life" "100000 Times" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Actuator/Cap Color" "Black" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Operating Force" "1.6N" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "With Lamp" "-" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Voltage Rating (DC)" "24V" (effects (font (size 1.27 1.27)) (hide yes)))
+    (property "Switch Length" "6mm" (effects (font (size 1.27 1.27)) (hide yes)))
+  )
+
+)

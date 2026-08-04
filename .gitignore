@@ -6,4 +6,8 @@ hardware/bonsai_pcb/*
 !hardware/bonsai_pcb/*.kicad_pro
 !hardware/bonsai_pcb/*.kicad_sch
 !hardware/bonsai_pcb/*.gbrjob
+!hardware/bonsai_pcb/assets/
+!hardware/bonsai_pcb/assets/**
+!hardware/bonsai_pcb/library/
+!hardware/bonsai_pcb/library/**
 node_modules/
