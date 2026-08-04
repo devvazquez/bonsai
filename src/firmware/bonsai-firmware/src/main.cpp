@@ -1,46 +1,25 @@
 #include <Arduino.h>
 #include <Camera.h>
 #include <SD.h>
-#include <BLEManager.h>
 #include <WiFiManager.h>
-#include <TTS.h>
+#include <Audio.h>
 
 #define BUTTON_PIN 01
 
 Camera      camera;
-BLEManager  ble;
 WiFiManager wifi;
-TTS         tts;
-
-void onConfigReceived(const BonsaiConfig& cfg) {
-    // OV3660 safe frameSize values: 8=VGA(640x480), 10=XGA(1024x768), 13=UXGA(1600x1200), 17=QXGA(2048x1536)
-    uint32_t safe = min(cfg.frameSize, (uint32_t)FRAMESIZE_QXGA);
-    camera.setFrameSize(static_cast<framesize_t>(safe));
-}
-
-void onWiFiCommand(const WiFiCommand& cmd) {
-    if (cmd.action == WiFiCommand::Action::Add) {
-        wifi.addNetwork(cmd.ssid, cmd.password);
-    } else {
-        wifi.removeNetwork(cmd.ssid);
-    }
-}
+Audio audio;
 
 void onWiFiStatus(WiFiStatus status, const String& detail) {
     switch (status) {
         case WiFiStatus::Connected:
-            ble.notify(("wifi:connected:" + detail).c_str());
             Serial.printf("WiFi connected — http://%s\n", detail.c_str());
             break;
         case WiFiStatus::Disconnected:
-            ble.notify("wifi:disconnected");
-            break;
+            Serial.println("Wifi Disconnected");
+        break;
         case WiFiStatus::Reconnecting:
-            ble.notify("wifi:reconnecting");
-            break;
-        case WiFiStatus::APStarted:
-            ble.notify(("wifi:ap:" + detail).c_str());
-            Serial.printf("AP started — http://%s\n", detail.c_str());
+            Serial.println("Wifi Reconnecting");
             break;
     }
 }
@@ -57,14 +36,10 @@ void setup() {
         while(1);
     }
 
-    ble.onConfigReceived(onConfigReceived);
-    ble.onWiFiCommand(onWiFiCommand);
-    ble.begin();
-
     wifi.onStatusChange(onWiFiStatus);
     wifi.begin();
 
-    tts.begin(wifi);
+    // tts.begin(wifi);
 }
 
 void loop() {
@@ -98,6 +73,7 @@ void loop() {
             camera.save(SD, "/capture.jpg");
         } else if (pressCount >= 2) {
             // double press — add action here
+            audio.playDefault(DefaultAudios::START_TALKING);
         }
         pressCount = 0;
     }
