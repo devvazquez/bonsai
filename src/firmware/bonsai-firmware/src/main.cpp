@@ -3,12 +3,100 @@
 #include <SD.h>
 #include <WiFiManager.h>
 #include <Audio.h>
+#include <ArduinoJson.h>
+#include <Lang.h>
 
 #define BUTTON_PIN 01
 
-Camera      camera;
+/* TODO: 
+    - Implement backend API.
+    - Download TTS defaults.
+    - Groq tools:
+        - Stop searching for wifi.
+        - Change language.
+    -  Config:
+        - wifi networks (ssid, password)
+*/
+
+
+Camera camera;
 WiFiManager wifi;
 Audio audio;
+
+namespace {
+
+constexpr const char* kConfigFile        = "/config.json";
+constexpr const char* kDefaultLang       = "ca-ES";
+constexpr const char* kDefaultBackendUrl = "";
+
+DynamicJsonDocument configDoc(4096);
+bool                isFirstBoot = false;
+
+void applyConfigDefaults() {
+    if (!configDoc.containsKey("lang"))        configDoc["lang"]        = kDefaultLang;
+    if (!configDoc.containsKey("backend_url")) configDoc["backend_url"] = kDefaultBackendUrl;
+}
+
+// Load /config.json from the SD card.
+// Sets isFirstBoot when the file is missing or unreadable, so callers can run first-time setup.
+void loadConfig() {
+    if (!SD.exists(kConfigFile)) {
+        isFirstBoot = true;
+        applyConfigDefaults();
+        return;
+    }
+
+    File file = SD.open(kConfigFile, FILE_READ);
+    if (!file) {
+        isFirstBoot = true;
+        applyConfigDefaults();
+        return;
+    }
+
+    String content = file.readString();
+    file.close();
+
+    if (deserializeJson(configDoc, content) != DeserializationError::Ok) {
+        isFirstBoot = true;
+        configDoc.clear();
+    }
+
+    applyConfigDefaults();
+}
+
+void saveConfig() {
+    File file = SD.open(kConfigFile, FILE_WRITE);
+    if (!file) return;
+    serializeJson(configDoc, file);
+    file.close();
+}
+
+}  // namespace
+
+
+// Language (declared in lib/Lang/Lang.h). It lives here because this is where
+// the config and saveConfig() are, so there is only ever one copy of it.
+namespace bonsai {
+
+String lang() {
+    String l = configDoc["lang"] | kDefaultLang;
+    // The config says "ca-ES"; the backend wants "ca".
+    const int guio = l.indexOf('-');
+    if (guio > 0) l = l.substring(0, guio);
+    l.toLowerCase();
+    return l;
+}
+
+void setLang(const String& nou) {
+    if (nou.length() == 0) return;
+    if (String(configDoc["lang"] | "") == nou) return;   // nothing to save
+    configDoc["lang"] = nou;
+    saveConfig();
+    Serial.printf("Idioma: %s\n", lang().c_str());
+}
+
+}  // namespace bonsai
+
 
 void onWiFiStatus(WiFiStatus status, const String& detail) {
     switch (status) {
@@ -17,6 +105,7 @@ void onWiFiStatus(WiFiStatus status, const String& detail) {
             break;
         case WiFiStatus::Disconnected:
             Serial.println("Wifi Disconnected");
+            audio.playDefault(DefaultAudios::NO_WIFI);
         break;
         case WiFiStatus::Reconnecting:
             Serial.println("Wifi Reconnecting");
@@ -25,21 +114,32 @@ void onWiFiStatus(WiFiStatus status, const String& detail) {
 }
 
 void setup() {
+    //Set the pullup config fo the button pin.
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    
     Serial.begin(115200);
     SD.begin(); // Initialize SD card
 
-    //Set the pullup config fo the button pin.
-    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    loadConfig();
+    if (isFirstBoot) {
+        Serial.println("Detected first boot, writing config defaults.");
+        saveConfig();
+    }
+    wifi.onStatusChange(onWiFiStatus);
+    wifi.setConfig(configDoc, saveConfig);
+    wifi.begin();
 
     if (!camera.begin()) {
-        Serial.println("Camera initialization failed");
+        Serial.println("Camera initialization failed.");
         while(1);
     }
 
-    wifi.onStatusChange(onWiFiStatus);
-    wifi.begin();
+    //Download default audios if they are missing.
+    audio.downloadDefaultAudiosIfMissing(wifi);
 
-    // tts.begin(wifi);
+    if(isFirstBoot) {
+        audio.playDefault(DefaultAudios::FIRST_BOOT);
+    }
 }
 
 void loop() {
