@@ -10,12 +10,12 @@
 
 /* TODO: 
     - Implement backend API.
-    - Download TTS defaults.
+    - Download TTS defaults. X
     - Groq tools:
         - Stop searching for wifi.
         - Change language.
     -  Config:
-        - wifi networks (ssid, password)
+        - wifi networks (ssid, password) X
 */
 
 
@@ -119,6 +119,10 @@ void setup() {
     
     Serial.begin(115200);
     SD.begin(); // Initialize SD card
+
+    if (!audio.begin()) {
+        Serial.println("I2S init failed: there will be no sound.");
+    }
 
     loadConfig();
     if (isFirstBoot) {

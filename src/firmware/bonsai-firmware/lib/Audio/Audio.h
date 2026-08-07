@@ -5,6 +5,15 @@
 // include each other. Audio.cpp includes the full header.
 class WiFiManager;
 
+// Pins, from the schematic (U1 = XIAO ESP32-S3, U2 = MAX98357A).
+// DIN=U1/1 D0, BLCK=U1/2 D1, LRC=U1/3 D2, SD=U1/10 D9.
+constexpr int kI2sDin  = 1;   // amplifier data in
+constexpr int kI2sBclk = 2;   // bit clock
+constexpr int kI2sLrc  = 3;   // word select
+// SD on the MAX98357A: low shuts it down, driven high it plays the LEFT slot,
+// which is why playWav() puts the samples there and zeroes the right one.
+constexpr int kAmpEnable = 8;
+
 // The default clips: enum id and the name the backend knows them by. Adding one
 // here is enough — the enum and the download loop are both generated from it.
 // What each one says lives in the backend: GET /api/v1/clips?lang=ca
@@ -22,7 +31,17 @@ enum class DefaultAudios {
 
 class Audio {
 public:
-    void playDefault(DefaultAudios audio);
+    // Installs the I2S driver. Call once from setup(), before playing anything.
+    bool begin();
+
+    // Plays a mono 16-bit PCM WAV from the SD card, blocking until it ends.
+    // Any sample rate the file declares; false if it cannot be played.
+    bool playWav(const char* path);
+
+    // Plays a default clip in the current language, if it is on the SD card.
+    bool playDefault(DefaultAudios audio);
+
+    bool isPlaying() const { return _playingAudio; }
 
     // Downloads every clip that is not on the SD card yet, to
     // /audio/<clip>_<lang>.wav.
@@ -36,4 +55,5 @@ public:
 
 private:
     bool _playingAudio = false;
+    bool _ready        = false;
 };
