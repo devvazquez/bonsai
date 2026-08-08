@@ -11,3 +11,6 @@ hardware/bonsai_pcb/*
 !hardware/bonsai_pcb/library/
 !hardware/bonsai_pcb/library/**
 node_modules/
+
+# Piper voice models (large, download with tools/gen_wakeword_synth.py docs)
+voices/
