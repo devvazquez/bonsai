@@ -3,7 +3,7 @@
 #include <SD.h>
 #include <WiFiManager.h>
 #include <Lang.h>
-#include <driver/i2s.h>
+#include <driver/i2s_std.h>
 
 namespace {
 
@@ -19,9 +19,8 @@ const DefaultClip kClips[] = {
 #undef BONSAI_CLIP_ENTRY
 };
 
-constexpr const char*  kClipsDir  = "/audio";
-constexpr i2s_port_t   kI2sPort   = I2S_NUM_0;
-constexpr uint32_t     kStartRate = 16000;
+constexpr const char* kClipsDir  = "/audio";
+constexpr uint32_t    kStartRate = 16000;
 
 // 512 in + 1024 out is 3 KB of stack. The loopTask only gets 8 KB, so bigger
 // buffers here are a stack overflow waiting to happen.
@@ -118,45 +117,41 @@ bool Audio::begin() {
     pinMode(kAmpEnable, OUTPUT);
     digitalWrite(kAmpEnable, LOW);   // amplifier off until there is audio
 
-    const i2s_config_t config = {
-        .mode                 = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
-        .sample_rate          = kStartRate,
-        .bits_per_sample      = I2S_BITS_PER_SAMPLE_16BIT,
-        .channel_format       = I2S_CHANNEL_FMT_RIGHT_LEFT,
-        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-        .intr_alloc_flags     = ESP_INTR_FLAG_LEVEL1,
-        .dma_buf_count        = 8,
-        .dma_buf_len          = 256,
-        .use_apll             = false,
-        .tx_desc_auto_clear   = true,
-        .fixed_mclk           = 0,
-    };
-    const i2s_pin_config_t pins = {
-        .mck_io_num   = I2S_PIN_NO_CHANGE,
-        .bck_io_num   = kI2sBclk,
-        .ws_io_num    = kI2sLrc,
-        .data_out_num = kI2sDin,
-        .data_in_num  = I2S_PIN_NO_CHANGE,
-    };
-
-    esp_err_t err = i2s_driver_install(kI2sPort, &config, 0, nullptr);
+    i2s_chan_config_t chan_cfg =
+        I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
+    esp_err_t err = i2s_new_channel(&chan_cfg, &_tx, nullptr);
     if (err != ESP_OK) {
-        Serial.printf("i2s_driver_install failed: %s\n", esp_err_to_name(err));
-        return false;
-    }
-    err = i2s_set_pin(kI2sPort, &pins);
-    if (err != ESP_OK) {
-        Serial.printf("i2s_set_pin failed: %s\n", esp_err_to_name(err));
-        i2s_driver_uninstall(kI2sPort);
+        Serial.printf("i2s_new_channel failed: %s\n", esp_err_to_name(err));
         return false;
     }
 
-    _ready = true;
+    i2s_std_config_t std_cfg = {
+        .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(kStartRate),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
+                        I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = (gpio_num_t)kI2sBclk,
+            .ws   = (gpio_num_t)kI2sLrc,
+            .dout = (gpio_num_t)kI2sDin,
+            .din  = I2S_GPIO_UNUSED,
+            .invert_flags = { .mclk_inv = false, .bclk_inv = false, .ws_inv = false },
+        },
+    };
+    err = i2s_channel_init_std_mode(_tx, &std_cfg);
+    if (err != ESP_OK) {
+        Serial.printf("i2s_channel_init_std_mode failed: %s\n", esp_err_to_name(err));
+        i2s_del_channel(_tx);
+        _tx = nullptr;
+        return false;
+    }
+
+    i2s_channel_enable(_tx);
     return true;
 }
 
 bool Audio::playWav(const char* path) {
-    if (!_ready) {
+    if (!_tx) {
         Serial.println("Audio::begin() has not run");
         return false;
     }
@@ -175,8 +170,10 @@ bool Audio::playWav(const char* path) {
 
     // The clips are 16 kHz but /speak also serves 8000 and 22050, so the rate
     // comes from the file instead of being hardcoded.
-    i2s_set_clk(kI2sPort, wav.sampleRate, I2S_BITS_PER_SAMPLE_16BIT,
-                I2S_CHANNEL_STEREO);
+    i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(wav.sampleRate);
+    i2s_channel_disable(_tx);
+    i2s_channel_reconfig_std_clock(_tx, &clk_cfg);
+    i2s_channel_enable(_tx);
 
     file.seek(wav.dataStart);
     _playingAudio = true;
@@ -203,14 +200,18 @@ bool Audio::playWav(const char* path) {
         }
 
         size_t written = 0;
-        i2s_write(kI2sPort, output, samples * 2 * sizeof(int16_t), &written,
-                  portMAX_DELAY);
+        i2s_channel_write(_tx, output, samples * 2 * sizeof(int16_t), &written,
+                          portMAX_DELAY);
         remaining -= bytesRead;
     }
 
-    // Let the DMA buffers drain before cutting the amplifier, or the tail of
-    // the sentence gets clipped.
-    i2s_zero_dma_buffer(kI2sPort);
+    // Push silence through so the DMA buffers drain before the amplifier is
+    // cut, or the tail of the sentence gets clipped.
+    memset(output, 0, sizeof(output));
+    for (int i = 0; i < 3; i++) {
+        size_t written = 0;
+        i2s_channel_write(_tx, output, sizeof(output), &written, portMAX_DELAY);
+    }
     digitalWrite(kAmpEnable, LOW);
     _playingAudio = false;
 

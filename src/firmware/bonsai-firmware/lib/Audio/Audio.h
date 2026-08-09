@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <driver/i2s_std.h>
 
 // Forward declaration, not #include <WiFiManager.h>: the two headers would
 // include each other. Audio.cpp includes the full header.
@@ -54,6 +55,6 @@ public:
     static String pathFor(DefaultAudios audio, const String& lang);
 
 private:
-    bool _playingAudio = false;
-    bool _ready        = false;
+    i2s_chan_handle_t _tx = nullptr;
+    bool _playingAudio    = false;
 };

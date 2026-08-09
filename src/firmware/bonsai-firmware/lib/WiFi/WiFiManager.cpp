@@ -176,6 +176,7 @@ void WiFiManager::_notify(WiFiStatus status, const String& detail) {
 
 // Root store the core already ships, so HTTPS validates with no CA in config.
 extern const uint8_t rootca_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
+extern const uint8_t rootca_crt_bundle_end[]   asm("_binary_x509_crt_bundle_end");
 
 namespace {
 
@@ -226,7 +227,9 @@ String WiFiManager::_getAudio(const String& ruta, const char* qui) {
         // box. "backend_ca" in the config pins a certificate instead.
         const char* ca = (*_config)["backend_ca"] | "";
         if (strlen(ca) > 0) secureClient.setCACert(ca);
-        else                secureClient.setCACertBundle(rootca_crt_bundle_start);
+        else                secureClient.setCACertBundle(
+                                rootca_crt_bundle_start,
+                                rootca_crt_bundle_end - rootca_crt_bundle_start);
     }
 
     HTTPClient http;
