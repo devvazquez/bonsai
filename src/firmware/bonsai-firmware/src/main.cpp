@@ -1,12 +1,19 @@
 #include <Arduino.h>
 #include <Camera.h>
 #include <SD.h>
+#include <SPI.h>
 #include <WiFiManager.h>
 #include <Audio.h>
 #include <ArduinoJson.h>
 #include <Lang.h>
 
 #define BUTTON_PIN 01
+
+// microSD slot on the Sense expansion board: the default SPI pins (SCK 7,
+// MISO 8, MOSI 9) with CS on GPIO21. Not the variant's default SS, which is
+// GPIO44 — the RX pad — and is what a bare SD.begin() would drive instead,
+// so the card would never mount.
+constexpr int kSdCs = 21;
 
 /* TODO: 
     - Implement backend API.
@@ -118,7 +125,14 @@ void setup() {
     pinMode(BUTTON_PIN, INPUT_PULLUP);
     
     Serial.begin(115200);
-    SD.begin(); // Initialize SD card
+
+    // The card holds /config.json and the default clips, so a failed mount is
+    // worth saying out loud: without it loadConfig() finds nothing and every
+    // boot looks like the first one.
+    SPI.begin(SCK, MISO, MOSI, kSdCs);
+    if (!SD.begin(kSdCs)) {
+        Serial.println("SD mount failed: no config and no clips, treating this as a first boot.");
+    }
 
     if (!audio.begin()) {
         Serial.println("I2S init failed: there will be no sound.");
