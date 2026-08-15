@@ -10,21 +10,16 @@ import {
   SparklesIcon,
   SunIcon,
   SunMoonIcon,
-  UnplugIcon,
   Volume2Icon,
 } from "lucide-react"
 
 import { EnsoArc, EnsoMark } from "@/components/enso"
 import { useTheme } from "@/components/theme-provider"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
+  CardDescription, CardHeader, CardTitle
 } from "@/components/ui/card"
 import { Slider } from "@/components/ui/slider"
 import { Spinner } from "@/components/ui/spinner"
@@ -166,11 +161,7 @@ function RiseIn({ delayMs = 0, className, children }: RiseInProps) {
   )
 }
 
-type MainPageProps = {
-  onDisconnect: () => void
-}
-
-export function MainPage({ onDisconnect }: MainPageProps) {
+export function MainPage() {
   const { theme, setTheme } = useTheme()
   const { lang, setLang, t } = useI18n()
   const [volume, setVolume] = React.useState(70)
@@ -362,16 +353,6 @@ export function MainPage({ onDisconnect }: MainPageProps) {
                 />
               </SettingRow>
             </CardContent>
-            <CardFooter>
-              <Button
-                variant="destructive"
-                className="h-12 w-full"
-                onClick={onDisconnect}
-              >
-                <UnplugIcon data-icon="inline-start" />
-                {t("disconnect")}
-              </Button>
-            </CardFooter>
           </Card>
         </RiseIn>
       </main>
