@@ -17,7 +17,7 @@ constexpr int kAmpEnable = 8;
 
 // The default clips: enum id and the name the backend knows them by. Adding one
 // here is enough — the enum and the download loop are both generated from it.
-// What each one says lives in the backend: GET /api/v1/clips?lang=ca
+// What each one says lives in the backend: GET /api/v1/audios?lang=ca
 #define BONSAI_DEFAULT_AUDIOS(X)                                              \
     X(NO_WIFI,        "no_wifi")        /* the WiFi dropped */                \
     X(START_TALKING,  "start_talking")  /* plays while the photo uploads */   \

@@ -298,8 +298,8 @@ String WiFiManager::textToSpeech(const String text) {
 
 String WiFiManager::defaultAudio(const String& clipId) {
     if (clipId.length() == 0) return "";
-    // No text here: the backend decides what each clip says (clips.py).
-    return _getAudio(String("/api/v1/clips/") + urlEncode(clipId)
+    // No text here: the backend decides what each clip says (audios.py).
+    return _getAudio(String("/api/v1/audios/") + urlEncode(clipId)
                      + "?lang=" + bonsai::lang()
                      + "&audioFormat=wav&sampleRate=16000",
                      "defaultAudio");
