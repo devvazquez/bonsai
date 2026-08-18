@@ -26,9 +26,9 @@ constexpr int kSdCs = 21;
 */
 
 
-Camera camera;
+Camera      camera;
 WiFiManager wifi;
-Audio audio;
+Audio       audio;
 
 namespace {
 
