@@ -70,7 +70,16 @@
         }
       },
       "diff_pair_dimensions": [],
-      "drc_exclusions": [],
+      "drc_exclusions": [
+        [
+          "copper_edge_clearance|164745376|108659048|a34cf858-f686-43b1-b69a-036cc9e11751|132306d6-a2cf-4569-84e1-48a261245b2f",
+          ""
+        ],
+        [
+          "copper_edge_clearance|171913220|108659048|a34cf858-f686-43b1-b69a-036cc9e11751|456fb5ce-2111-41d2-918d-cd362628088e",
+          ""
+        ]
+      ],
       "meta": {
         "filename": "board_design_settings.json",
         "version": 2
@@ -241,7 +250,7 @@
       "internal_id": "",
       "mfg": "",
       "mpn": "",
-      "sch_revision": "2"
+      "sch_revision": ""
     },
     "layer_pairs": [],
     "layer_presets": [],
@@ -489,7 +498,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "bonsai_pcb.kicad_pro",
+    "filename": ".bonsai_pcb.spinrender-src.kicad_pro",
     "version": 3
   },
   "net_settings": {
