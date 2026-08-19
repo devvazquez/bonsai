@@ -11,8 +11,18 @@ class WiFiManager;
 constexpr int kI2sDin  = 1;   // amplifier data in
 constexpr int kI2sBclk = 2;   // bit clock
 constexpr int kI2sLrc  = 3;   // word select
-// SD on the MAX98357A: low shuts it down, driven high it plays the LEFT slot,
-// which is why playWav() puts the samples there and zeroes the right one.
+// SD_MODE on the MAX98357A (the bare part, U2 — not a breakout). Above 1.4 V it
+// plays the LEFT slot, which is why playWav() puts the samples there and zeroes
+// the right one; below 0.16 V the amplifier is shut down.
+//
+// GPIO8 is also D9 = MISO of the SPI bus the microSD slot on the Sense board
+// hangs off, and this net carries no resistor — U1 pad 10 runs straight to
+// U2 pad 4, so SD_MODE sits directly on the card's data-out line. Driving it as
+// a push-pull output clamps MISO and the card can never answer again, so the
+// pin is only ever taken while nothing is reading the card. The rest of the
+// time it is left as an input, where SD_MODE's internal 100k pull-down takes it
+// to ground and shuts the amplifier down on its own — no external part needed,
+// and only ~33 uA of load on MISO, which SPI does not notice.
 constexpr int kAmpEnable = 8;
 
 // The default clips: enum id and the name the backend knows them by. Adding one
@@ -55,6 +65,13 @@ public:
     static String pathFor(DefaultAudios audio, const String& lang);
 
 private:
+    // Takes kAmpEnable and drives it high, waking the amplifier in left-slot
+    // mode. Only safe with no SD access in flight — see the note on kAmpEnable.
+    void ampTake();
+
+    // Hands kAmpEnable back to the SPI bus so the microSD can be read again.
+    void ampRelease();
+
     i2s_chan_handle_t _tx = nullptr;
     bool _playingAudio    = false;
 };

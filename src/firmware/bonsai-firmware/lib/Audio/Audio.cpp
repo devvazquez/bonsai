@@ -4,6 +4,7 @@
 #include <WiFiManager.h>
 #include <Lang.h>
 #include <driver/i2s_std.h>
+#include <esp_heap_caps.h>
 
 namespace {
 
@@ -25,6 +26,12 @@ constexpr uint32_t    kStartRate = 16000;
 // 512 in + 1024 out is 3 KB of stack. The loopTask only gets 8 KB, so bigger
 // buffers here are a stack overflow waiting to happen.
 constexpr size_t kBufferSamples = 512;
+
+// The whole clip is buffered in PSRAM before playback starts, so this is the
+// longest one that can be played: 4 MB is ~130 s of the 16 kHz mono the
+// backend serves, well past anything /speak returns, and leaves most of the
+// 8 MB free.
+constexpr size_t kMaxClipBytes = 4 * 1024 * 1024;
 
 String pathOf(const char* name, const String& lang) {
     return String(kClipsDir) + "/" + name + "_" + lang + ".wav";
@@ -113,9 +120,21 @@ String Audio::pathFor(DefaultAudios audio, const String& lang) {
     return name[0] ? pathOf(name, lang) : String("");
 }
 
-bool Audio::begin() {
+void Audio::ampTake() {
     pinMode(kAmpEnable, OUTPUT);
-    digitalWrite(kAmpEnable, LOW);   // amplifier off until there is audio
+    digitalWrite(kAmpEnable, HIGH);
+}
+
+void Audio::ampRelease() {
+    // INPUT and not OUTPUT LOW: low would shut the amplifier down but it would
+    // also hold the card's MISO at ground, and every SD read after that comes
+    // back as zeroes. Hi-Z hands the line to the SPI bus and SD_MODE's internal
+    // 100k pull-down does the shutting down instead.
+    pinMode(kAmpEnable, INPUT);
+}
+
+bool Audio::begin() {
+    ampRelease();   // amplifier off, and the microSD keeps its MISO line
 
     i2s_chan_config_t chan_cfg =
         I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
@@ -168,6 +187,35 @@ bool Audio::playWav(const char* path) {
         return false;
     }
 
+    if (wav.dataSize > kMaxClipBytes) {
+        Serial.printf("%s holds %u bytes of audio, more than the %u that fit\n",
+                      path, wav.dataSize, (uint32_t)kMaxClipBytes);
+        file.close();
+        return false;
+    }
+
+    // The clip is pulled into PSRAM in one go and the file closed before a
+    // single sample goes out. Enabling the amplifier means driving GPIO8, which
+    // is the same line the card answers on, so reading and playing at the same
+    // time is not something this board can do — see the note on kAmpEnable.
+    int16_t* clip =
+        (int16_t*)heap_caps_malloc(wav.dataSize, MALLOC_CAP_SPIRAM);
+    if (!clip) {
+        Serial.printf("No PSRAM for %u bytes of audio\n", wav.dataSize);
+        file.close();
+        return false;
+    }
+
+    file.seek(wav.dataStart);
+    const size_t bytesRead = file.read((uint8_t*)clip, wav.dataSize);
+    file.close();
+
+    if (bytesRead == 0) {
+        Serial.printf("Read nothing back from %s\n", path);
+        heap_caps_free(clip);
+        return false;
+    }
+
     // The clips are 16 kHz but /speak also serves 8000 and 22050, so the rate
     // comes from the file instead of being hardcoded.
     i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(wav.sampleRate);
@@ -175,34 +223,25 @@ bool Audio::playWav(const char* path) {
     i2s_channel_reconfig_std_clock(_tx, &clk_cfg);
     i2s_channel_enable(_tx);
 
-    file.seek(wav.dataStart);
     _playingAudio = true;
-    digitalWrite(kAmpEnable, HIGH);
+    ampTake();
 
-    int16_t  input[kBufferSamples];
-    int16_t  output[kBufferSamples * 2];
-    uint32_t remaining = wav.dataSize;
+    int16_t      output[kBufferSamples * 2];
+    const size_t total = bytesRead / sizeof(int16_t);
 
-    while (remaining > 0) {
-        const size_t toRead = min((uint32_t)kBufferSamples, remaining / 2);
-        if (toRead == 0) break;
+    for (size_t done = 0; done < total; done += kBufferSamples) {
+        const size_t samples = min(kBufferSamples, total - done);
 
-        const size_t bytesRead =
-            file.read((uint8_t*)input, toRead * sizeof(int16_t));
-        if (bytesRead == 0) break;
-
-        const size_t samples = bytesRead / sizeof(int16_t);
         // Audio in the LEFT slot only: that is the channel the MAX98357A picks
         // with SD driven high.
         for (size_t i = 0; i < samples; i++) {
-            output[i * 2]     = input[i];
+            output[i * 2]     = clip[done + i];
             output[i * 2 + 1] = 0;
         }
 
         size_t written = 0;
         i2s_channel_write(_tx, output, samples * 2 * sizeof(int16_t), &written,
                           portMAX_DELAY);
-        remaining -= bytesRead;
     }
 
     // Push silence through so the DMA buffers drain before the amplifier is
@@ -212,10 +251,10 @@ bool Audio::playWav(const char* path) {
         size_t written = 0;
         i2s_channel_write(_tx, output, sizeof(output), &written, portMAX_DELAY);
     }
-    digitalWrite(kAmpEnable, LOW);
+    ampRelease();
     _playingAudio = false;
 
-    file.close();
+    heap_caps_free(clip);
     return true;
 }
 

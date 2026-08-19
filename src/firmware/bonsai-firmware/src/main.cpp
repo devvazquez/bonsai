@@ -7,7 +7,12 @@
 #include <ArduinoJson.h>
 #include <Lang.h>
 
-#define BUTTON_PIN 01
+// The tactile switch (SW1). The first board wired it to U1 pad 11 — GPIO9,
+// which is D10 = MOSI of the microSD bus — so holding the button shorted MOSI
+// to ground and a pull-up on it fought the card. That trace is cut and the
+// switch leg goes to U1 pad 4 = GPIO4 = D3 instead, the nearest free pad.
+// See hardware/REWORK.md.
+#define BUTTON_PIN 4
 
 // microSD slot on the Sense expansion board: the default SPI pins (SCK 7,
 // MISO 8, MOSI 9) with CS on GPIO21. Not the variant's default SS, which is
@@ -73,7 +78,14 @@ void loadConfig() {
 
 void saveConfig() {
     File file = SD.open(kConfigFile, FILE_WRITE);
-    if (!file) return;
+    if (!file) {
+        // Worth saying out loud: silently dropping this is what made a board
+        // that could not reach the card look like one stuck on its first boot,
+        // asking for the WiFi again every time.
+        Serial.printf("Could not open %s for writing: config not saved.\n",
+                      kConfigFile);
+        return;
+    }
     serializeJson(configDoc, file);
     file.close();
 }
