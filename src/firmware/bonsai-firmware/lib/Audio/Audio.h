@@ -17,12 +17,21 @@ constexpr int kI2sLrc  = 3;   // word select
 //
 // GPIO8 is also D9 = MISO of the SPI bus the microSD slot on the Sense board
 // hangs off, and this net carries no resistor — U1 pad 10 runs straight to
-// U2 pad 4, so SD_MODE sits directly on the card's data-out line. Driving it as
-// a push-pull output clamps MISO and the card can never answer again, so the
-// pin is only ever taken while nothing is reading the card. The rest of the
-// time it is left as an input, where SD_MODE's internal 100k pull-down takes it
-// to ground and shuts the amplifier down on its own — no external part needed,
-// and only ~33 uA of load on MISO, which SPI does not notice.
+// U2 pad 4, so SD_MODE sits directly on the card's data-out line.
+//
+// This pin is the whole reason the card used to fail. What matters is not the
+// level it is left at but WHO OWNS IT: SPI.begin() routes the pad to the SPI
+// peripheral's MISO input, and any pinMode() call on it — INPUT and
+// INPUT_PULLUP just as much as OUTPUT — points it back at plain GPIO and leaves
+// the peripheral reading nothing. The card then mounts, because identification
+// is short and forgiving, and every transfer afterwards comes back empty.
+// SD_MODE's internal 100k pull-down is a red herring; it never disturbed the
+// bus, and no pull setting rescues a pin the peripheral can no longer see.
+//
+// So: nothing outside playWav() touches this pin, and playWav() only takes it
+// once the clip is in PSRAM and the file is closed, then gives it straight back
+// to the SPI peripheral. Between clips the pull-down holds SD_MODE at ground,
+// which shuts the amplifier down at no cost.
 constexpr int kAmpEnable = 8;
 
 // The default clips: enum id and the name the backend knows them by. Adding one
@@ -65,12 +74,13 @@ public:
     static String pathFor(DefaultAudios audio, const String& lang);
 
 private:
-    // Takes kAmpEnable and drives it high, waking the amplifier in left-slot
-    // mode. Only safe with no SD access in flight — see the note on kAmpEnable.
-    void ampTake();
+    // Takes kAmpEnable off the SPI peripheral and drives it high, waking the
+    // amplifier in left-slot mode. Only safe with no SD access in flight, and
+    // every call must be paired with ampRelease() — see the note on kAmpEnable.
+    static void ampTake();
 
-    // Hands kAmpEnable back to the SPI bus so the microSD can be read again.
-    void ampRelease();
+    // Gives kAmpEnable back to the SPI peripheral so the card works again.
+    static void ampRelease();
 
     i2s_chan_handle_t _tx = nullptr;
     bool _playingAudio    = false;

@@ -3,6 +3,7 @@
 #include <SD.h>
 #include <WiFiManager.h>
 #include <Lang.h>
+#include <SPI.h>
 #include <driver/i2s_std.h>
 #include <esp_heap_caps.h>
 
@@ -126,22 +127,19 @@ void Audio::ampTake() {
 }
 
 void Audio::ampRelease() {
-    // INPUT and not OUTPUT LOW: low would shut the amplifier down but it would
-    // also hold the card's MISO at ground, and every SD read after that comes
-    // back as zeroes.
-    //
-    // PULLUP and not a bare INPUT: SD_MODE's internal 100k pull-down is on this
-    // net, so a floating pin sits at 0 V and sdWait() reads the card as busy
-    // for ever ("sdSelectCard(): Select Failed"). The internal pull-up is the
-    // strongest one available here — measured against the 100k that is
-    // 3.3 * 100/145 = 2.28 V, under the 2.475 V this chip wants for a HIGH, so
-    // this is a best effort and not a guarantee. A 10k to 3V3 on D9 would put
-    // the line at 3.0 V and settle it properly.
-    pinMode(kAmpEnable, INPUT_PULLUP);
+    // Letting go is not enough: the pinMode() in ampTake() moved this pad from
+    // the SPI peripheral's MISO input to plain GPIO, and dropping it back to
+    // INPUT leaves it there. The peripheral has to be pointed at the pad again,
+    // the same way SPI.begin() did it in the first place, or the card answers
+    // into a disconnected input from here on.
+    pinMode(kAmpEnable, INPUT);
+    spiAttachMISO(SPI.bus(), kAmpEnable);
 }
 
 bool Audio::begin() {
-    ampRelease();   // amplifier off, and the microSD keeps its MISO line
+    // Deliberately does NOT touch kAmpEnable. That pin is the card's MISO, and
+    // calling pinMode() on a pin the SPI peripheral is driving takes the line
+    // away from it. Only playWav() borrows it, once the file is closed.
 
     i2s_chan_config_t chan_cfg =
         I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
