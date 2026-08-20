@@ -128,9 +128,16 @@ void Audio::ampTake() {
 void Audio::ampRelease() {
     // INPUT and not OUTPUT LOW: low would shut the amplifier down but it would
     // also hold the card's MISO at ground, and every SD read after that comes
-    // back as zeroes. Hi-Z hands the line to the SPI bus and SD_MODE's internal
-    // 100k pull-down does the shutting down instead.
-    pinMode(kAmpEnable, INPUT);
+    // back as zeroes.
+    //
+    // PULLUP and not a bare INPUT: SD_MODE's internal 100k pull-down is on this
+    // net, so a floating pin sits at 0 V and sdWait() reads the card as busy
+    // for ever ("sdSelectCard(): Select Failed"). The internal pull-up is the
+    // strongest one available here — measured against the 100k that is
+    // 3.3 * 100/145 = 2.28 V, under the 2.475 V this chip wants for a HIGH, so
+    // this is a best effort and not a guarantee. A 10k to 3V3 on D9 would put
+    // the line at 3.0 V and settle it properly.
+    pinMode(kAmpEnable, INPUT_PULLUP);
 }
 
 bool Audio::begin() {

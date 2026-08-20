@@ -144,6 +144,15 @@ void setup() {
     SPI.begin(SCK, MISO, MOSI, kSdCs);
     if (!SD.begin(kSdCs)) {
         Serial.println("SD mount failed: no config and no clips, treating this as a first boot.");
+    } else {
+        // A mount that succeeds and then fails every read looks identical to a
+        // missing card from the log alone, so say what actually answered.
+        const uint8_t type = SD.cardType();
+        const char*   name = type == CARD_NONE ? "none" :
+                             type == CARD_MMC  ? "MMC"  :
+                             type == CARD_SD   ? "SDSC" :
+                             type == CARD_SDHC ? "SDHC" : "unknown";
+        Serial.printf("SD mounted: %s, %llu MB\n", name, SD.cardSize() >> 20);
     }
 
     if (!audio.begin()) {
@@ -194,6 +203,7 @@ void loop() {
             pressCount++;
             lastPressTime = now;
             waitingDouble = true;
+            Serial.printf("BUTTON pressed on GPIO%d\n", BUTTON_PIN);
         }
     }
 
