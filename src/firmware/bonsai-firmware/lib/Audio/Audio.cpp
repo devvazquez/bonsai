@@ -34,6 +34,31 @@ constexpr size_t kBufferSamples = 512;
 // 8 MB free.
 constexpr size_t kMaxClipBytes = 4 * 1024 * 1024;
 
+// The jitter buffer between the socket and the DMA: four seconds at 8 kHz.
+// It only needs to be big enough to hold the prebuffer plus whatever arrives
+// while a burst is being spoken.
+constexpr size_t   kRingBytes           = 64 * 1024;
+
+// How long to collect before the first sound, as a fraction of real time rather
+// than a byte count, so it means the same thing at 8 kHz and at 16.
+//
+// This is the one number that trades latency for not stuttering. The link
+// measured 21-30 KB/s against the 16 KB/s that 8 kHz consumes, so it is ahead
+// on average but only by a little, and TLS delivers in records rather than
+// evenly — a gap of a few hundred ms is normal and has to be absorbed here or
+// it is audible.
+constexpr uint32_t kPrebufferMs         = 1000;
+constexpr uint32_t kPrebufferTimeoutMs  = 2500;
+
+// Silence pushed after the last sample so the DMA plays out what it is still
+// holding before the amplifier is cut. The default I2S config holds about
+// 180 ms at 8 kHz, and cutting into that clips the last word.
+constexpr uint32_t kDrainMs             = 400;
+
+// Upper bound on waiting for buffered audio to finish. The amplifier pin is
+// GPIO8, the card's MISO, so this must not be able to hang for ever.
+constexpr uint32_t kDrainTimeoutMs      = 30000;
+
 String pathOf(const char* name, const String& lang) {
     return String(kClipsDir) + "/" + name + "_" + lang + ".wav";
 }
@@ -174,6 +199,170 @@ bool Audio::begin() {
     return true;
 }
 
+void Audio::_playerTrampoline(void* self) {
+    static_cast<Audio*>(self)->_playerLoop();
+}
+
+// The consumer end of the jitter buffer. Owns its own stack, so the staging
+// buffer here is not competing with mbedTLS the way it would inside the
+// download callback.
+void Audio::_playerLoop() {
+    constexpr size_t kStageSamples = 256;
+    int16_t stereo[kStageSamples * 2];
+    uint8_t mono[kStageSamples * sizeof(int16_t)];
+
+    for (;;) {
+        // Parked until beginStream() says there is a sentence coming.
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        // Let the buffer fill before making a sound. Starting on the first byte
+        // guarantees an underrun a moment later, because the network delivers in
+        // bursts and the DMA drains at a constant rate.
+        const size_t   target = (size_t)_streamRate * 2 * kPrebufferMs / 1000;
+        const uint32_t tWait  = millis();
+        while (!_ending
+               && xStreamBufferBytesAvailable(_ring) < target
+               && millis() - tWait < kPrebufferTimeoutMs) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+
+        _underruns = 0;
+        _played    = 0;
+
+        for (;;) {
+            const size_t got = xStreamBufferReceive(_ring, mono, sizeof(mono),
+                                                    pdMS_TO_TICKS(100));
+            if (got == 0) {
+                // Nothing waiting: either the sentence is over, or the network
+                // is behind and the DMA is about to run dry anyway.
+                if (_ending && xStreamBufferBytesAvailable(_ring) == 0) break;
+                // Wanted samples and had none: that is a hole in the audio, and
+                // counting them is the only way to tell a smooth stream from a
+                // choppy one without standing next to the speaker.
+                ++_underruns;
+                continue;
+            }
+            _played += got;
+
+            const size_t samples = got / sizeof(int16_t);
+            const int16_t* in = reinterpret_cast<const int16_t*>(mono);
+            for (size_t i = 0; i < samples; ++i) {
+                // Left slot only, right zeroed: the channel the MAX98357A picks
+                // with SD_MODE high, same as playWav().
+                stereo[i * 2]     = in[i];
+                stereo[i * 2 + 1] = 0;
+            }
+            size_t written = 0;
+            i2s_channel_write(_tx, stereo, samples * 2 * sizeof(int16_t),
+                              &written, portMAX_DELAY);
+        }
+
+        xSemaphoreGive(_drained);
+    }
+}
+
+bool Audio::beginStream(uint32_t sampleRate) {
+    if (!_tx) {
+        Serial.println("Audio::begin() has not run");
+        return false;
+    }
+    if (sampleRate == 0) sampleRate = kStartRate;
+
+    if (!_ring) {
+        _ring = xStreamBufferCreate(kRingBytes, 1);
+        if (!_ring) {
+            Serial.printf("No memory for a %u byte audio buffer\n", kRingBytes);
+            return false;
+        }
+    }
+    if (!_drained) _drained = xSemaphoreCreateBinary();
+    if (!_player) {
+        // Core 1, next to the loop task that feeds it, and above it in priority
+        // so a late chunk is turned into sound the moment it lands.
+        xTaskCreatePinnedToCore(_playerTrampoline, "i2splay", 4096, this, 2,
+                                &_player, 1);
+        if (!_player) {
+            Serial.println("Could not start the audio player task");
+            return false;
+        }
+    }
+
+    xStreamBufferReset(_ring);
+    i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sampleRate);
+    i2s_channel_disable(_tx);
+    i2s_channel_reconfig_std_clock(_tx, &clk_cfg);
+    i2s_channel_enable(_tx);
+
+    _streamRate   = sampleRate;
+    _hasCarry     = false;
+    _ending       = false;
+    _playingAudio = true;
+    ampTake();
+
+    xTaskNotifyGive(_player);
+    return true;
+}
+
+// Copy in, return at once. Blocks only if the buffer is genuinely full, which
+// means the network is ahead of real time and waiting is exactly right.
+size_t Audio::writeStream(const uint8_t* data, size_t len) {
+    if (!_ring || !data || len == 0) return 0;
+
+    size_t idx = 0;
+    size_t sent = 0;
+
+    // The odd byte from a chunk boundary goes in first, so what reaches the ring
+    // is always whole little-endian samples.
+    if (_hasCarry && idx < len) {
+        const uint8_t pair[2] = { _carry, data[idx++] };
+        sent += xStreamBufferSend(_ring, pair, 2, pdMS_TO_TICKS(1000));
+        _hasCarry = false;
+    }
+
+    const size_t whole = ((len - idx) / 2) * 2;
+    if (whole > 0) {
+        sent += xStreamBufferSend(_ring, data + idx, whole, pdMS_TO_TICKS(1000));
+        idx += whole;
+    }
+    if (idx < len) {
+        _carry    = data[idx];
+        _hasCarry = true;
+    }
+    return sent;
+}
+
+void Audio::endStream() {
+    if (!_tx) return;
+
+    if (_player && _ring) {
+        _ending = true;
+        // Wait for what is already buffered to be spoken. Bounded, so a stuck
+        // player cannot hold the amplifier pin — and with it the card's MISO.
+        if (_drained) xSemaphoreTake(_drained, pdMS_TO_TICKS(kDrainTimeoutMs));
+    }
+
+    // Silence so the DMA drains before the amplifier is cut, or the tail of the
+    // sentence is clipped. Sized from the rate rather than a fixed number of
+    // buffers, which at 8 kHz came to barely more than the DMA holds.
+    int16_t quiet[kBufferSamples * 2];
+    memset(quiet, 0, sizeof(quiet));
+    const size_t drainSamples = (size_t)_streamRate * kDrainMs / 1000;
+    for (size_t done = 0; done < drainSamples; done += kBufferSamples) {
+        size_t written = 0;
+        i2s_channel_write(_tx, quiet, sizeof(quiet), &written, portMAX_DELAY);
+    }
+
+    ampRelease();
+    _playingAudio = false;
+    _hasCarry     = false;
+    _ending       = false;
+
+    Serial.printf("  [t] audio: %u KB played at %u Hz (%u ms), %u underruns\n",
+                  (unsigned)(_played / 1024), _streamRate,
+                  _streamRate ? (unsigned)(_played * 1000 / (_streamRate * 2)) : 0u,
+                  _underruns);
+}
+
 bool Audio::playWav(const char* path) {
     if (!_tx) {
         Serial.println("Audio::begin() has not run");
@@ -211,9 +400,11 @@ bool Audio::playWav(const char* path) {
         return false;
     }
 
+    const uint32_t tLoadStart = millis();
     file.seek(wav.dataStart);
     const size_t bytesRead = file.read((uint8_t*)clip, wav.dataSize);
     file.close();
+    const uint32_t loadMs = millis() - tLoadStart;
 
     if (bytesRead == 0) {
         Serial.printf("Read nothing back from %s\n", path);
@@ -231,6 +422,7 @@ bool Audio::playWav(const char* path) {
     _playingAudio = true;
     ampTake();
 
+    const uint32_t tPlayStart = millis();
     int16_t      output[kBufferSamples * 2];
     const size_t total = bytesRead / sizeof(int16_t);
 
@@ -258,6 +450,14 @@ bool Audio::playWav(const char* path) {
     }
     ampRelease();
     _playingAudio = false;
+
+    // Split on purpose: "load" is the card, "play" is the clip's own duration.
+    // Only the first is worth optimising — the second is how long the sentence
+    // takes to say, and no amount of tuning shortens that.
+    const uint32_t playMs = millis() - tPlayStart;
+    Serial.printf("  [t] playWav %s: load %u ms (%u KB at %u KB/s), play %u ms\n",
+                  path, loadMs, (unsigned)(bytesRead / 1024),
+                  loadMs ? (unsigned)(bytesRead / loadMs) : 0u, playMs);
 
     heap_caps_free(clip);
     return true;
@@ -302,12 +502,6 @@ void Audio::downloadDefaultAudiosIfMissing(WiFiManager& wifi) {
         }
 
         Serial.printf("Downloading %s...\n", path.c_str());
-        const String wav = wifi.defaultAudio(clip.name);
-        if (wav.length() == 0) {
-            Serial.println("  ...nothing came back from the backend.");
-            ++failed;
-            continue;
-        }
 
         File file = SD.open(path, FILE_WRITE);
         if (!file) {
@@ -316,21 +510,20 @@ void Audio::downloadDefaultAudiosIfMissing(WiFiManager& wifi) {
             continue;
         }
 
-        // length(), not c_str(): the WAV has 0x00 bytes in it.
-        const size_t written = file.write(
-            reinterpret_cast<const uint8_t*>(wav.c_str()), wav.length());
+        // Streamed rather than fetched into a String: these clips run to
+        // hundreds of KB and a String has only internal heap to live in, so the
+        // longer ones never fitted and simply never downloaded.
+        const bool ok = wifi.defaultAudioToFile(clip.name, file);
         file.close();
 
-        if (written != wav.length()) {
-            // A half file is worse than none: SD.exists() would accept it later.
-            Serial.printf("  ...only %u of %u bytes were written; removing it.\n",
-                          written, wav.length());
+        if (!ok) {
+            // A half file is worse than none: SD.exists() would accept it later
+            // and playWav() would then fail on it every boot.
             SD.remove(path);
             ++failed;
             continue;
         }
 
-        Serial.printf("  ...%u bytes.\n", wav.length());
         ++downloaded;
     }
 

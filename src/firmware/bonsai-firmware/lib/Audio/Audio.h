@@ -1,6 +1,9 @@
 #pragma once
 #include <Arduino.h>
 #include <driver/i2s_std.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/stream_buffer.h>
+#include <freertos/semphr.h>
 
 // Forward declaration, not #include <WiFiManager.h>: the two headers would
 // include each other. Audio.cpp includes the full header.
@@ -58,6 +61,27 @@ public:
     // Any sample rate the file declares; false if it cannot be played.
     bool playWav(const char* path);
 
+    // --- Playing straight off the network ---------------------------------
+    //
+    // For /look, where waiting for the whole sentence to download before making
+    // any sound doubles the delay for no reason: the backend emits raw pcm16 as
+    // soon as the TTS has a first sentence, and these push it at the amplifier
+    // as it lands. Nothing is buffered and the card is never touched.
+    //
+    // beginStream, then writeStream as many times as there is data, then
+    // endStream — which must be called even on failure, since beginStream takes
+    // the amplifier's pin and only endStream gives it back.
+    //
+    // writeStream only copies into a jitter buffer; a separate task does the
+    // talking to I2S. That separation is the point. i2s_channel_write() blocks
+    // until the DMA has room, i.e. in real time, and doing that on the thread
+    // that reads the socket means not reading the socket — the TCP window
+    // closes, the backend stops, and the audio arrives in bursts with holes
+    // between them. Measured before the split: 6 s of speech took 18 s.
+    bool   beginStream(uint32_t sampleRate);
+    size_t writeStream(const uint8_t* pcm, size_t len);
+    void   endStream();
+
     // Plays a default clip in the current language, if it is on the SD card.
     bool playDefault(DefaultAudios audio);
 
@@ -84,4 +108,26 @@ private:
 
     i2s_chan_handle_t _tx = nullptr;
     bool _playingAudio    = false;
+
+    // A network chunk can end mid-sample. The odd byte waits here for the next
+    // chunk instead of being dropped, which would otherwise swap the halves of
+    // every sample after it and turn the rest of the sentence into noise.
+    uint8_t _carry    = 0;
+    bool    _hasCarry = false;
+
+    static void _playerTrampoline(void* self);
+    void        _playerLoop();
+
+    StreamBufferHandle_t _ring    = nullptr;   // network -> player
+    TaskHandle_t         _player  = nullptr;
+    SemaphoreHandle_t    _drained = nullptr;   // player says the ring is empty
+    volatile bool        _ending  = false;
+
+    uint32_t _streamRate = 16000;
+
+    // How often the player wanted samples and the buffer was empty. Reported by
+    // endStream(): a non-zero count is choppy audio, and it is the only way to
+    // measure that without listening to the speaker.
+    volatile uint32_t _underruns = 0;
+    volatile size_t   _played    = 0;
 };
