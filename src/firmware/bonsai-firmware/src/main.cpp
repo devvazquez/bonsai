@@ -497,16 +497,18 @@ void setup() {
     // to matter ("send payload failed"). SVGA is ~15 KB and still far more
     // detail than describing a room needs.
     //
-    // The default is XGA anyway, against that measurement: sending less than the
-    // vision model accepts only means the backend feeds it a smaller picture,
-    // and the detail thrown away on the board cannot be got back. 1024x768 is
-    // the largest of these whose long edge is 1024, which is where the model
-    // starts scaling the image down itself — past that the upload is paid for
-    // and then discarded. If the backend's own limit turns out to be higher,
-    // raise this rather than leaving it: the point is to land exactly on it.
-    // Override per board with "frame_size".
-    const String wanted = configDoc["frame_size"] | "xga";
-    framesize_t  size   = FRAMESIZE_XGA;
+    // SVGA is also exactly the largest of these the backend leaves alone.
+    // app/images.py shrinks the long side to IMAGE_MAX_SIDE, 896 px by default,
+    // and returns early only when max(width, height) <= 896 — so 800x600 goes
+    // straight through while XGA's 1024 does not. Its own benchmarks put that
+    // resize at 192 ms, paid on top of uploading pixels that are then thrown
+    // away. Anything above SVGA costs time twice and buys nothing.
+    //
+    // So this tracks IMAGE_MAX_SIDE, not the camera's capabilities: if that is
+    // raised on the server, the next size up becomes worth sending. Override per
+    // board with "frame_size".
+    const String wanted = configDoc["frame_size"] | "svga";
+    framesize_t  size   = FRAMESIZE_SVGA;
     if      (wanted == "uxga") size = FRAMESIZE_UXGA;
     else if (wanted == "sxga") size = FRAMESIZE_SXGA;
     else if (wanted == "xga")  size = FRAMESIZE_XGA;
