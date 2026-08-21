@@ -6,6 +6,7 @@
 #include <Audio.h>
 #include <ArduinoJson.h>
 #include <Lang.h>
+#include <SetupPortal.h>
 
 // The Arduino loop task gets 8 KB by default, and that is not enough for what
 // runs nested inside look(): HTTPClient, mbedTLS and the audio sink all stack
@@ -54,6 +55,7 @@ constexpr const char* kSdProbeFile = "/.bonsai-probe";
 Camera      camera;
 WiFiManager wifi;
 Audio       audio;
+SetupPortal portal;
 
 namespace {
 
@@ -62,7 +64,9 @@ constexpr const char* kLookFile          = "/look.wav";
 constexpr const char* kDefaultLang       = "ca-ES";
 constexpr const char* kDefaultBackendUrl = "";
 
-DynamicJsonDocument configDoc(4096);
+// 8 KB and not 4: the setup portal adds the two tokens and up to five
+// ssid/password pairs on top of everything else that lives in here.
+DynamicJsonDocument configDoc(8192);
 bool                isFirstBoot = false;
 
 // Mounts the card at the fastest speed it will actually work at.
@@ -171,23 +175,6 @@ void saveConfig() {
     file.close();
 }
 
-// ---------------------------------------------------------------------------
-// Serial configuration console.
-//
-// This is currently the only way to configure a board. The BLE service that
-// used to call wifi.addNetwork() went with the audio rewrite and nothing
-// replaced it, and there is no AP mode, so a freshly flashed board has no way
-// to be told a network: it boots, finds no credentials and sits reconnecting
-// for ever. Open the serial monitor at 115200 and type "help".
-//
-// Each command takes the rest of the line verbatim, so SSIDs and passwords with
-// spaces, colons or quotes in them need no escaping.
-// ---------------------------------------------------------------------------
-
-String pendingSsid;
-
-// Defined below, next to the button handling it shares its behaviour with.
-void look();
 
 // ---------------------------------------------------------------------------
 // Background photo writer.
@@ -281,124 +268,6 @@ void savePhotoInBackground(const uint8_t* jpeg, size_t len) {
     }
 }
 
-void printConfig() {
-    Serial.println(F("--- config ---"));
-    Serial.printf("lang        : %s\n", configDoc["lang"] | "(unset)");
-    const char* url = configDoc["backend_url"] | "";
-    Serial.printf("backend_url : %s\n", url[0] ? url : "(unset)");
-
-    String   ssids[WIFI_MAX_NETWORKS];
-    String   passes[WIFI_MAX_NETWORKS];
-    uint32_t count = 0;
-    WiFiManager::loadNetworksFromJson(configDoc, ssids, passes, count);
-
-    if (count == 0) {
-        // ASCII only in console output: the serial terminal renders anything
-        // else as question marks.
-        Serial.println(F("networks    : none - the board cannot connect"));
-    } else {
-        for (uint32_t i = 0; i < count; ++i) {
-            // The password is only ever shown as a length: this output gets
-            // pasted into bug reports and chat windows.
-            Serial.printf("network %u   : \"%s\" (password %u chars)\n",
-                          i, ssids[i].c_str(), passes[i].length());
-        }
-    }
-    Serial.printf("SD          : %s\n",
-                  SD.cardType() == CARD_NONE ? "not mounted" : "mounted");
-    Serial.println(F("--------------"));
-}
-
-void printHelp() {
-    Serial.println(F(
-        "\nCommands (the rest of the line is taken as-is, no quoting):\n"
-        "  ssid <name>       remember an SSID, then give it a password\n"
-        "  pass <secret>     set the password for the SSID above and save\n"
-        "  wifi del <name>   forget a network\n"
-        "  lang <code>       e.g. ca-ES, es-ES (clips re-download per language)\n"
-        "  backend <url>     backend base URL, no trailing slash\n"
-        "  look              take a photo, describe it out loud (as the button)\n"
-        "  scan              list the 2.4 GHz networks in range\n"
-        "  show              print the current config\n"
-        "  save              write /config.json now\n"
-        "  reboot            restart the board\n"));
-}
-
-void handleCommand(const String& raw) {
-    String line = raw;
-    line.trim();
-    if (line.length() == 0) return;
-
-    // Split on the first space: "verb" plus everything after it, untouched.
-    const int   sep  = line.indexOf(' ');
-    const String verb = sep < 0 ? line : line.substring(0, sep);
-    const String rest = sep < 0 ? String("") : line.substring(sep + 1);
-
-    if (verb == "help" || verb == "?") {
-        printHelp();
-    } else if (verb == "show") {
-        printConfig();
-    } else if (verb == "look") {
-        // The same thing a single button press does, minus the button. Useful
-        // when the board is on a bench and nobody is there to press it.
-        look();
-    } else if (verb == "scan") {
-        // Worth having on the device rather than trusting a laptop's scan: this
-        // radio is 2.4 GHz only, so what the PC can see is not the question.
-        Serial.println(F("Scanning (2.4 GHz only - this radio has no 5 GHz)..."));
-        const int n = WiFi.scanNetworks();
-        if (n <= 0) {
-            Serial.println(F("Nothing found. Any 5 GHz network is invisible here."));
-        } else {
-            for (int i = 0; i < n; ++i) {
-                Serial.printf("  %2d) %-32s ch%-3d %4d dBm%s\n", i,
-                              WiFi.SSID(i).c_str(), WiFi.channel(i), WiFi.RSSI(i),
-                              WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "  (open)" : "");
-            }
-        }
-        WiFi.scanDelete();
-    } else if (verb == "ssid") {
-        if (rest.length() == 0) { Serial.println(F("ssid: needs a name")); return; }
-        pendingSsid = rest;
-        Serial.printf("SSID \"%s\" held - now send: pass <secret>\n",
-                      pendingSsid.c_str());
-    } else if (verb == "pass") {
-        if (pendingSsid.length() == 0) {
-            Serial.println(F("pass: send \"ssid <name>\" first"));
-            return;
-        }
-        // addNetwork() saves through the onChanged callback setConfig() was
-        // given, so there is nothing to write here.
-        wifi.addNetwork(pendingSsid, rest);
-        Serial.printf("Saved \"%s\" with a %u character password.\n",
-                      pendingSsid.c_str(), rest.length());
-        pendingSsid = "";
-        Serial.println(F("Send \"reboot\" to connect with it."));
-    } else if (verb == "wifi" && rest.startsWith("del ")) {
-        const String ssid = rest.substring(4);
-        wifi.removeNetwork(ssid);
-        Serial.printf("Forgot \"%s\".\n", ssid.c_str());
-    } else if (verb == "lang") {
-        if (rest.length() == 0) { Serial.println(F("lang: needs a code")); return; }
-        bonsai::setLang(rest);
-        Serial.printf("Language is now %s.\n", rest.c_str());
-    } else if (verb == "backend") {
-        configDoc["backend_url"] = rest;
-        saveConfig();
-        Serial.printf("Backend is now \"%s\".\n", rest.c_str());
-    } else if (verb == "save") {
-        saveConfig();
-        Serial.println(F("Wrote /config.json."));
-    } else if (verb == "reboot") {
-        Serial.println(F("Rebooting..."));
-        Serial.flush();
-        delay(100);
-        ESP.restart();
-    } else {
-        Serial.printf("Unknown command \"%s\" - try \"help\".\n", verb.c_str());
-    }
-}
-
 // What a single button press does: photograph whatever is in front of the
 // wearer, send it to /look, and say the answer out loud.
 //
@@ -473,20 +342,54 @@ void look() {
                   millis() - tAll, capMs, reqMs, firstSampleMs);
 }
 
-// Non-blocking: collects a line across loop() iterations and never waits on
-// input, so the button and the WiFi keep being serviced while someone types.
-void consoleLoop() {
-    static String line;
-    while (Serial.available()) {
-        const char c = (char)Serial.read();
-        if (c == '\r') continue;
-        if (c == '\n') {
-            const String done = line;
-            line = "";
-            handleCommand(done);
-            continue;
-        }
-        if (line.length() < 200) line += c;
+// ---------------------------------------------------------------------------
+// Setup access point.
+//
+// The board has no screen and no console, so this is the only way to tell it a
+// network. It comes up in two situations, with a different page each time:
+//
+//   first boot        no credentials on the card, nothing to connect to, so
+//                     setup() raises the AP before the WiFi stack is started
+//                     and serves the onboarding walkthrough.
+//   long press        a board that is already configured and running. The panel
+//                     is served instead: everything on one screen, prefilled,
+//                     for changing a password or a backend URL.
+//
+// Either way the portal ends by rebooting, so these never return once the user
+// presses save.
+// ---------------------------------------------------------------------------
+
+bool needsSetup() {
+    if (isFirstBoot) return true;
+
+    String   ssids[WIFI_MAX_NETWORKS];
+    String   passes[WIFI_MAX_NETWORKS];
+    uint32_t count = 0;
+    WiFiManager::loadNetworksFromJson(configDoc, ssids, passes, count);
+    return count == 0;
+}
+
+// Writes the card through the same lock the photo task uses: on the long-press
+// path that task is already running, and a save landing in the middle of a JPEG
+// write is exactly what the lock exists to prevent. On the first-boot path the
+// lock is uncontended, which costs nothing.
+void savePortalConfig() {
+    if (sdLock) xSemaphoreTakeRecursive(sdLock, portMAX_DELAY);
+    saveConfig();
+    if (sdLock) xSemaphoreGiveRecursive(sdLock);
+}
+
+void runSetupPortal(SetupPortal::Mode mode) {
+    portal.begin(configDoc, savePortalConfig, mode);
+
+    // Both conditions, not just isDone(): isDone() goes true the moment the
+    // config is saved, ~1.2 s before loop() gets to ESP.restart(). Leaving on
+    // isDone() alone skipped the restart and dropped straight into wifi.begin()
+    // with the radio still in AP mode, which is what threw the flood of
+    // ESP_ERR_WIFI_NOT_INIT.
+    while (!portal.isDone() || portal.isRebootPending()) {
+        portal.loop();
+        delay(2);   // the radio and the TCP stack need the airtime
     }
 }
 
@@ -562,6 +465,15 @@ void setup() {
         Serial.println("Detected first boot, writing config defaults.");
         saveConfig();
     }
+
+    // Before the WiFi stack and before the photo task: with no network to join
+    // there is nothing for the rest of setup() to do, and the portal reboots the
+    // board anyway, so anything started here would only be torn down again.
+    if (needsSetup()) {
+        Serial.println("No usable config: starting the onboarding portal.");
+        runSetupPortal(SetupPortal::Mode::Onboarding);
+    }
+
     wifi.onStatusChange(onWiFiStatus);
     wifi.setConfig(configDoc, saveConfig);
     wifi.setSdLock(sdLock);
@@ -583,9 +495,18 @@ void setup() {
     // backend, a 320x240 frame answered in 1.8 s while the board sat at 4.8 s,
     // and on a phone hotspot the big upload also failed outright often enough
     // to matter ("send payload failed"). SVGA is ~15 KB and still far more
-    // detail than describing a room needs. Override with "frame_size".
-    const String wanted = configDoc["frame_size"] | "svga";
-    framesize_t  size   = FRAMESIZE_SVGA;
+    // detail than describing a room needs.
+    //
+    // The default is XGA anyway, against that measurement: sending less than the
+    // vision model accepts only means the backend feeds it a smaller picture,
+    // and the detail thrown away on the board cannot be got back. 1024x768 is
+    // the largest of these whose long edge is 1024, which is where the model
+    // starts scaling the image down itself — past that the upload is paid for
+    // and then discarded. If the backend's own limit turns out to be higher,
+    // raise this rather than leaving it: the point is to land exactly on it.
+    // Override per board with "frame_size".
+    const String wanted = configDoc["frame_size"] | "xga";
+    framesize_t  size   = FRAMESIZE_XGA;
     if      (wanted == "uxga") size = FRAMESIZE_UXGA;
     else if (wanted == "sxga") size = FRAMESIZE_SXGA;
     else if (wanted == "xga")  size = FRAMESIZE_XGA;
@@ -598,27 +519,33 @@ void setup() {
     //Download default audios if they are missing.
     audio.downloadDefaultAudiosIfMissing(wifi);
 
-    printConfig();
-    Serial.println(F("Type \"help\" for the configuration console."));
-
     if(isFirstBoot) {
         audio.playDefault(DefaultAudios::FIRST_BOOT);
     }
 }
 
 void loop() {
+    // Button: debounce, then single / double / long press.
+    //
+    // Presses are counted on release rather than on the falling edge, which is
+    // what makes a long press distinguishable at all: while the button is still
+    // down there is no way to know yet whether it is a tap. It costs look() the
+    // duration of the press itself — some 80 ms on top of the 250 ms the
+    // double-press window already cost — and buys the AP an entry point on a
+    // board with no screen and no console.
+    static bool     lastState     = HIGH;
+    static uint32_t lastChange    = 0;
+    static uint32_t pressStart    = 0;   // falling edge of the press being held
+    static uint32_t lastRelease   = 0;   // rising edge, opens the double window
+    static uint8_t  pressCount    = 0;
+    static bool     waitingDouble = false;
+    static bool     longFired     = false;
 
-    consoleLoop();
-
-    // Button debounce + single/double press detection.
-    static bool     lastState       = HIGH;
-    static uint32_t lastChange      = 0;
-    static uint32_t lastPressTime   = 0;
-    static uint8_t  pressCount      = 0;
-    static bool     waitingDouble   = false;
-
-    const uint32_t DEBOUNCE_MS      = 50;
-    const uint32_t DOUBLE_PRESS_MS  = 250;
+    const uint32_t DEBOUNCE_MS     = 50;
+    const uint32_t DOUBLE_PRESS_MS = 250;
+    // 2 s: past anything anyone reaches while tapping, short enough to find
+    // without being told.
+    const uint32_t LONG_PRESS_MS   = 2000;
 
     uint32_t now = millis();
     bool currentState = digitalRead(BUTTON_PIN);
@@ -626,15 +553,36 @@ void loop() {
     if (currentState != lastState && now - lastChange > DEBOUNCE_MS) {
         lastChange = now;
         lastState  = currentState;
-        if (currentState == LOW) {  // falling edge = press
-            pressCount++;
-            lastPressTime = now;
-            waitingDouble = true;
+        if (currentState == LOW) {          // falling edge = press
+            pressStart = now;
+            longFired  = false;
             Serial.printf("BUTTON pressed on GPIO%d\n", BUTTON_PIN);
+        } else {                            // rising edge = release
+            lastRelease = now;
+            // A press already consumed by the long-press branch is not a tap.
+            if (!longFired) {
+                pressCount++;
+                waitingDouble = true;
+            }
         }
     }
 
-    if (waitingDouble && now - lastPressTime > DOUBLE_PRESS_MS) {
+    // Fires while the button is still down, so holding it does something
+    // observable instead of the user having to guess how long is long enough.
+    // Never returns: the portal ends in a reboot.
+    if (lastState == LOW && !longFired && now - pressStart >= LONG_PRESS_MS) {
+        longFired     = true;
+        waitingDouble = false;
+        pressCount    = 0;
+        Serial.println("BUTTON held: raising the setup access point.");
+        // Synthesised rather than a clip: this has to work on a board whose card
+        // is empty or missing, which is exactly the board someone reaches for
+        // this button on.
+        audio.beep(880, 220);
+        runSetupPortal(SetupPortal::Mode::Panel);
+    }
+
+    if (waitingDouble && now - lastRelease > DOUBLE_PRESS_MS) {
         waitingDouble = false;
         if (pressCount == 1) {
             look();

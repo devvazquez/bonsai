@@ -363,6 +363,76 @@ void Audio::endStream() {
                   _underruns);
 }
 
+bool Audio::beep(uint32_t freqHz, uint32_t ms) {
+    if (!_tx) {
+        Serial.println("Audio::begin() has not run");
+        return false;
+    }
+    // A clip or a stream already owns GPIO8. Cutting in would take the pin from
+    // under it and leave the amplifier enabled by two callers at once.
+    if (_playingAudio) return false;
+    if (freqHz == 0 || ms == 0) return false;
+
+    constexpr uint32_t kBeepRate = 16000;
+    // A quarter of full scale. This goes to a 3 W amplifier two centimetres from
+    // someone's ear, and a confirmation tone has no business being the loudest
+    // thing the board can do.
+    constexpr float    kBeepPeak = 8000.0f;
+
+    i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(kBeepRate);
+    i2s_channel_disable(_tx);
+    i2s_channel_reconfig_std_clock(_tx, &clk_cfg);
+    i2s_channel_enable(_tx);
+
+    _playingAudio = true;
+    ampTake();
+
+    const uint32_t total = (uint32_t)((uint64_t)kBeepRate * ms / 1000);
+    // 4 ms of ramp at each end. Starting a sine at full amplitude steps the cone
+    // instantly and that is heard as a click in front of the tone, which rather
+    // undoes the point of a clean acknowledgement.
+    const uint32_t ramp = min<uint32_t>(kBeepRate / 250, total / 2);
+
+    int16_t output[kBufferSamples * 2];
+
+    for (uint32_t done = 0; done < total; done += kBufferSamples) {
+        const uint32_t samples = min<uint32_t>(kBufferSamples, total - done);
+
+        for (uint32_t i = 0; i < samples; ++i) {
+            const uint32_t n = done + i;
+
+            float env = 1.0f;
+            if (ramp > 0) {
+                if (n < ramp)               env = (float)n / (float)ramp;
+                else if (total - n < ramp)  env = (float)(total - n) / (float)ramp;
+            }
+
+            const float phase = 2.0f * (float)M_PI * (float)freqHz
+                              * (float)n / (float)kBeepRate;
+            // LEFT slot only, like everything else here: that is the channel the
+            // MAX98357A picks with its SD pin driven high.
+            output[i * 2]     = (int16_t)(sinf(phase) * kBeepPeak * env);
+            output[i * 2 + 1] = 0;
+        }
+
+        size_t written = 0;
+        i2s_channel_write(_tx, output, samples * 2 * sizeof(int16_t), &written,
+                          portMAX_DELAY);
+    }
+
+    // Drain, same as playWav: the amplifier must not be cut while the DMA still
+    // holds the tail.
+    memset(output, 0, sizeof(output));
+    for (int i = 0; i < 3; i++) {
+        size_t written = 0;
+        i2s_channel_write(_tx, output, sizeof(output), &written, portMAX_DELAY);
+    }
+
+    ampRelease();
+    _playingAudio = false;
+    return true;
+}
+
 bool Audio::playWav(const char* path) {
     if (!_tx) {
         Serial.println("Audio::begin() has not run");

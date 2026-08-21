@@ -4,3 +4,6 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+# Generated from the HTML by scripts/embed_setup_page.py at build time
+lib/Setup/setup_page.h
+lib/Setup/panel_page.h

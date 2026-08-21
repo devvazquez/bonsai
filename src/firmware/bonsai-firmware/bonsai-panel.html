@@ -1,0 +1,845 @@
+<!doctype html>
+<html lang="ca">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Configuració de Bonsai</title>
+<!--
+  The panel a long press opens. Same design system as bonsai-setup.html — the
+  tokens, the components and the copy register are lifted from it deliberately,
+  so the two pages read as one product. What differs is the shape: no steps, no
+  rail, no progress. A board that already works, one screen, prefilled from
+  GET /api/config, change one thing and save.
+
+  Served from flash by SetupPortal in Mode::Panel — see lib/Setup/SetupPortal.h.
+  Nothing may be loaded from the network: the device is an access point while
+  this page is open, so no fonts, no CDNs, no external images.
+
+  Secrets never reach the browser. A stored token or Wi-Fi password comes back
+  as a boolean, the field shows a "Desat" tag, and leaving it alone omits the key
+  from the POST so the firmware keeps what it has.
+-->
+<style>
+  :root{
+    --bg:#fbfbfa;
+    --surface:#ffffff;
+    --line:#e7e5e1;
+    --line-soft:#f0efec;
+    --text:#15181c;
+    --text-dim:#767b83;
+    --text-faint:#a3a7ad;
+    --pale-blue:#eaf1ff;
+    --ink-blue:#2f5fc4;
+    --accent:#4d7ff2;
+    --pale-yellow:#fbf3db;
+    --ink-yellow:#7a5200;
+    --pale-red:#fdebec;
+    --ink-red:#9f2f2d;
+    --pale-green:#edf3ec;
+    --ink-green:#346538;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html{-webkit-text-size-adjust:100%;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
+    font-size:15px;
+    line-height:1.55;
+    min-height:100vh;
+  }
+
+  /* ============ SHELL ============ */
+  .shell{
+    max-width:1080px;
+    margin:0 auto;
+    padding:22px 20px 56px;
+  }
+
+  .topbar{
+    display:flex;
+    align-items:center;
+    gap:16px;
+    padding-bottom:20px;
+    border-bottom:1px solid var(--line);
+    margin-bottom:28px;
+  }
+  .logo{ height:24px; width:auto; display:block; }
+
+  .panel{ min-width:0; }
+
+  h1{
+    font-size:26px; line-height:1.25; font-weight:600;
+    letter-spacing:-.015em; margin:0 0 10px;
+  }
+  h2{
+    font-size:15px; font-weight:600; margin:0 0 12px;
+    letter-spacing:-.005em;
+  }
+  p.sub{ color:var(--text-dim); font-size:14.5px; margin:0 0 28px; max-width:56ch; }
+
+  /* The panel has no steps to separate its parts, so the groups borrow the
+     hairline the wizard used between a step and its actions. */
+  .group{
+    border-top:1px solid var(--line);
+    padding-top:24px;
+    margin-top:28px;
+  }
+
+  /* ============ CONTROLS ============ */
+  .btn{
+    appearance:none; border:1px solid transparent; border-radius:8px;
+    padding:12px 20px; font-size:14.5px; font-weight:600;
+    font-family:inherit; cursor:pointer;
+    transition:background .15s ease, border-color .15s ease, color .15s ease;
+  }
+  .btn:active{ transform:scale(.985); }
+  .btn-primary{ background:var(--text); color:#fff; }
+  .btn-primary:hover{ background:#33383f; }
+  .btn-primary:disabled{ background:var(--line); color:var(--text-faint); cursor:not-allowed; }
+  .btn-secondary{ background:transparent; border-color:var(--line); color:var(--text); }
+  .btn-secondary:hover{ border-color:#cfcdc8; }
+  .btn-secondary:disabled{ color:var(--text-faint); cursor:not-allowed; }
+  .btn-quiet{ background:transparent; color:var(--text-dim); border:none; padding:12px 4px; }
+  .btn-quiet:hover{ color:var(--text); }
+  .btn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  .actions{
+    display:flex; gap:10px; align-items:center;
+    margin-top:30px; padding-top:22px;
+    border-top:1px solid var(--line);
+  }
+  .actions .spacer{ flex:1; }
+  .actions .btn-primary{ min-width:150px; }
+
+  @media(max-width:619px){
+    .actions{
+      display:grid; gap:9px;
+      margin-top:26px; padding-top:20px;
+    }
+    .actions .spacer{ display:none; }
+    .actions .btn{ width:100%; padding:14px 18px; }
+    .actions .btn-primary{ order:1; min-width:0; }
+    .actions .btn-secondary{ order:2; }
+    .actions .btn-quiet{ order:3; padding:8px; margin-top:2px; }
+  }
+
+  /* ============ FIELDS ============ */
+  .field{ margin-bottom:20px; }
+  .field:last-child{ margin-bottom:0; }
+  .field label.lbl{
+    display:block; font-size:13px; font-weight:500;
+    margin-bottom:6px;
+  }
+  .field .lblrow{
+    display:flex; align-items:center; gap:8px; margin-bottom:6px;
+  }
+  .field .lblrow label.lbl{ margin-bottom:0; }
+  .field .hint{ font-size:12.5px; color:var(--text-dim); margin:0 0 8px; }
+  input[type=text],input[type=password],input[type=url],select{
+    width:100%; background:var(--surface);
+    border:1px solid var(--line); border-radius:8px;
+    padding:12px 14px; color:var(--text);
+    font-size:15px; font-family:inherit; outline:none;
+    transition:border-color .15s ease;
+  }
+  input[type=text].mono,input[type=password].mono,input[type=url].mono{
+    font-family:var(--mono); font-size:13.5px; letter-spacing:-.01em;
+  }
+  input:focus,select:focus{ border-color:var(--accent); }
+  input::placeholder{ color:var(--text-faint); }
+  .inline-check{ display:flex; align-items:center; gap:8px; margin-top:9px; }
+  .inline-check input{ width:15px; height:15px; accent-color:var(--accent); margin:0; }
+  .inline-check label{ font-size:13px; color:var(--text-dim); }
+
+  /* ============ RADIO CARDS (language) ============ */
+  .opts{ display:grid; gap:9px; margin-bottom:4px; }
+  .opt{
+    display:flex; align-items:center; gap:12px;
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:10px; padding:14px 16px; cursor:pointer;
+    transition:border-color .15s ease, background .15s ease;
+  }
+  .opt:hover{ border-color:#cfcdc8; }
+  .opt.sel{ border-color:var(--accent); background:var(--pale-blue); }
+  .opt .radio{
+    width:16px; height:16px; border-radius:50%;
+    border:1.5px solid #c6c4bf; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .opt.sel .radio{ border-color:var(--accent); }
+  .opt.sel .radio::after{
+    content:""; width:8px; height:8px; border-radius:50%; background:var(--accent);
+  }
+  .opt-body{ min-width:0; }
+  .opt-name{ font-size:14.5px; font-weight:500; }
+  .opt-meta{ font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+
+  /* ============ WIFI ============ */
+  .netlist{
+    border:1px solid var(--line); border-radius:10px;
+    overflow:hidden; background:var(--surface); margin-bottom:16px;
+  }
+  .netlist:empty{ display:none; }
+  .netrow{
+    display:flex; align-items:center; gap:12px;
+    padding:13px 15px; cursor:pointer;
+    border-bottom:1px solid var(--line-soft);
+    transition:background .12s ease;
+  }
+  .netrow:last-child{ border-bottom:none; }
+  .netrow:hover{ background:var(--bg); }
+  .netrow .name{ flex:1; font-size:14.5px; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .netrow .lock{ font-size:12px; color:var(--text-faint); }
+  .signal{ display:flex; align-items:flex-end; gap:2px; height:13px; flex-shrink:0; }
+  .signal i{ width:3px; border-radius:1px; background:var(--line); }
+  .signal i:nth-child(1){height:35%} .signal i:nth-child(2){height:58%}
+  .signal i:nth-child(3){height:80%} .signal i:nth-child(4){height:100%}
+  .signal.s1 i:nth-child(1){background:var(--accent)}
+  .signal.s2 i:nth-child(-n+2){background:var(--accent)}
+  .signal.s3 i:nth-child(-n+3){background:var(--accent)}
+  .signal.s4 i{background:var(--accent)}
+
+  /* saved networks */
+  .saved{ display:flex; flex-direction:column; gap:8px; margin-bottom:18px; }
+  .saved:empty{ display:none; }
+  .saved-item{
+    display:flex; align-items:center; gap:12px;
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:10px; padding:12px 14px;
+  }
+  .saved-item .idx{
+    font-size:12.5px; color:var(--text-faint);
+    font-variant-numeric:tabular-nums;
+    width:18px; flex-shrink:0;
+  }
+  .saved-item .name{ flex:1; font-size:14.5px; font-weight:500; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .saved-item .edit{
+    background:none; border:none; color:var(--text-dim); cursor:pointer;
+    font-size:12.5px; padding:0 2px; text-decoration:underline; flex-shrink:0;
+    font-family:inherit;
+  }
+  .saved-item .edit:hover{ color:var(--text); }
+  .saved-item .rm{
+    background:none; border:none; cursor:pointer; padding:6px;
+    color:var(--text-faint); font-size:16px; line-height:1; border-radius:6px;
+  }
+  .saved-item .rm:hover{ color:var(--ink-red); background:var(--pale-red); }
+
+  .tag{
+    display:inline-block; font-size:11.5px; font-weight:500;
+    padding:3px 9px; border-radius:999px;
+  }
+  .tag-blue{ background:var(--pale-blue); color:var(--ink-blue); }
+  .tag-green{ background:var(--pale-green); color:var(--ink-green); }
+
+  .counter{
+    font-size:12.5px; color:var(--text-dim);
+    font-variant-numeric:tabular-nums;
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:10px;
+  }
+
+  /* password entry, same sheet the wizard uses */
+  .sheet-bg{
+    position:fixed; inset:0; background:rgba(20,22,26,.35);
+    display:none; align-items:flex-end; justify-content:center; z-index:50;
+    padding:0;
+  }
+  .sheet-bg.open{ display:flex; }
+  .sheet{
+    background:var(--surface); width:100%; max-width:440px;
+    border-radius:16px 16px 0 0; padding:24px 22px 26px;
+    animation:up .28s cubic-bezier(.16,1,.3,1);
+  }
+  @keyframes up{ from{transform:translateY(24px);opacity:0;} to{transform:none;opacity:1;} }
+  @media (prefers-reduced-motion: reduce){ .sheet{ animation:none; } }
+  @media(min-width:620px){
+    .sheet-bg{ align-items:center; padding:20px; }
+    .sheet{ border-radius:14px; }
+  }
+  .sheet h2{ margin-bottom:4px; font-size:17px; }
+  .sheet .who{ font-family:var(--mono); font-size:12px; color:var(--text-dim); margin-bottom:18px; }
+  .sheet .row{ display:flex; gap:9px; margin-top:18px; }
+  .sheet .row .btn{ flex:1; }
+
+  .errbox{
+    background:var(--pale-red); color:var(--ink-red);
+    border-radius:8px; padding:11px 14px; font-size:13.5px;
+    margin-bottom:18px; display:none;
+  }
+  .errbox.show{ display:block; }
+  .okbox{
+    background:var(--pale-green); color:var(--ink-green);
+    border-radius:8px; padding:11px 14px; font-size:13.5px;
+    margin-bottom:18px; display:none;
+  }
+  .okbox.show{ display:block; }
+
+  .center{
+    display:flex; flex-direction:column; align-items:center;
+    justify-content:center; text-align:center; gap:18px;
+    padding:52px 0;
+  }
+  .spinner{
+    width:32px; height:32px; border-radius:50%;
+    border:2.5px solid var(--line); border-top-color:var(--accent);
+    animation:spin .9s linear infinite;
+  }
+  @keyframes spin{ to{transform:rotate(360deg);} }
+  .badge{
+    width:46px; height:46px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .badge.ok{ background:var(--pale-green); }
+  .center .t{ font-weight:600; font-size:16px; }
+  .center .d{ color:var(--text-dim); font-size:14px; max-width:40ch; }
+
+  .hidden{ display:none !important; }
+
+  @media(min-width:860px){
+    .shell{ padding:30px 32px 72px; }
+    .topbar{ margin-bottom:40px; }
+    .logo{ height:27px; }
+    .panel{ max-width:640px; }
+    h1{ font-size:30px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <div class="topbar">
+    <img class="logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAAA1CAYAAAD709aSAAA77ElEQVR42u19eXwdVdn/93vOzF2Ttkkpm9imgIItbiCvr6KkFQFlR0hYhAKlUhGxVOBFwNfbqwJqVVaBlkXZJQFBdlEoBVxAUIGXKq9Ik1JZuiRtk7vOzHl+f8zMzdybmzZJU5Tf2/P53C43mZlzzpzne57n+yyH2AItkxEFANksBKBga3snmwbgpZqm3EqlPi8ibvAdALgkbXiYl1u3/FYAFgB365Rtbe+WZm0ZoKIJv2vrEN3ZTu//lwlr6xA9bRI4fTWkvQ0G/PcEZALjCTYDVd0TgjQ0ya1Lf2v7P93aOiTcxXH89TLllBtkWltGYgAgIgSEW+yZMvb3HgqMNzbufyMNC+mmKfc2TNzZpJtbnHRziwk+5YaJO5tU09Q5W2LD2tq2trHdcyufsdWwQi3quCtkdzuFi2BwgAvEG96Lf5x8nVxGchFC0BoTjUQIUCqa2xbWcto6RGeDZ130sHyaLj5M4vU3/oFHrmxn6d9Ui2Sdlz5oAWxtW9u/K60R+X+oLBi1uXduzYjV2U7vuCvlQDuF31kxfAGCBgpsKOweS+HaUxbLzwAgswDcfG1o4Pp5t8vXzr5TnjzrVjl8Y1rQ5rSOAIy+fa/sdvFD8pil8GQ8jStjSdz73t3x/EW/lP072+lllshWbWVr29rGZqP1ACC97dTtmpp2Hg/ABB+1WQLemhFraZbuF6+S/ewkfglBUzkHVwQCQDwHppSDEx+Hk06+HrdkszRtnVCjNw+FbR1QIsBZt8pNiRQuTzTg0yBO2hIz19Ehur2d3n//Qj5hx/F0LI7PuCWYYj/cYh6e0pgeT+HhSx6QE7Iz6W4Fra1ta9uspgBIqqnltFRzywtw5W8lmlfSzVPvadzmPe/bLA2rrUP00izd9qtlDxXDL8Qgblx4JCzSNz1IKAJ2oQ9OshFfPPla+X5nO71MBnp0z4TqbKd35s24KDEOs4r9KLplCID/BYDp08fO3GkLwOrb98gHkwk8QGKbYj9cEIoKliJ0uQjPc6DiSdxyyQNyeHYm3UxmK2htbVvbKM1Ak26aklVaLyL5IQATCG5HqiOMZy+Jj9tp11EBViYjqqMN5virpclW+IXSGCc+WOkQMlgNm3axH05iHP7rpEVyYjZLt3WEgh3yRGfcJAfGUzi/1A9HW4i5RRRF4aZMRtRveqPa2+hNz0xGVGcbTOZu2VbZuE9rNDsleFTVnJ8itBiIcWFicdx+yf3y4WyW7r8hEb+1bW3/7pqVFx8/pQXkhWI8DyIeAAFERNwylXqP1vp7owAs4ROAIilC3BxL4n1uCS6UrzUxYoky+oXAckow8TiuPeUa+fDSkQi2CKe1QeZ3SNKy8EMIYAwQS0B5gvMuP45/zWZpFs+lA1D8+/pEfGaJWCPitkQ4fTqYAagt3BlPoqVcgMtwfDUwSEK5DqAUUnYcd13ygDRNexmyJfi0rW1r+/8YsGBrtTepdETjCpxEtEWMENxnxEJ12iJYS7N0j7tKLk6kcUg5D7eieRAQnxxzAbgQeAwCgUjQuIDSSFkJ3Dn7emnsaIPZtGALT1sMK0sar4TvxZPYwy3DtWOwS3m8pgHnnA6577/ulN+ce6fMhwijJHh2Jt1slma44HjaYljt7fT0vbg0NQ4zin3++KI4RYFE/W5KQTlFuMkUdrUt/DSbpcGMzeHqtrat7f9eEzEaNYGDVT+HKGvAfNp0aMBpi8RePJfOMVfJybEUzi/nUYmipi/InhWH1jZUKKlOAQBgCCgqKKcEN5HGbk4Bt5I8vDUjGiJSLzRBRLhgAXR2Lp2v3ixftRP4Wrngm57Gd3pO0nFcY1mAGMCOY79zOzCTd0pveS3+8/y7JKc0HikUcc2P2/m6T6LDDDXWRYvEnjuXTuYemZNoxNdCsKqYuYQHAamg4AOzVMavYOU3wE2Px+ELH5YF587kgkXPiT33Y3C2LsWtbWvbaDMAoC3rOc/zJPJdqMy4pLIh3h/8MANSQg/ctJch0Uj1kNN5AlBLs3SPvVIOsxK4Gx4oBooKhEBIIJ4Cy0W8BOAeCFZrjX1JHGXZUJ7PAVVSRJKNsEo5XLX4FJ7Z1iYabUAllkmEmSegszPpAsC8W+V8HcPFxoEHgSLBQLOBCAyD50OAeBpaKcC4vvkWSwDlIlaJg7MuauMdIsIFALOsGWOHxLLtLGfulc/GY3jYGNB4UIpgcG+TSENBgHIRrh2DZceBYr//bNK3FqngxhOwSnm0n/15dvqgxXcStDQAL9005ZdU+jAR46EqNUdZxsiX8r3Lr8fW1Jyt7d+nBSllLT9WWs8XYyrKFqkgYnoJ8ylfd8iIQhSkRNjWCbXqZXDb6agEaB57tZykLVwHA0uML6QARCnAskHj4Vv5lfh+Z5bl8Fan3CAf1wrX2XF8sJyDp3RFI3PjaVhOAT++9mSeHdGoGALm/Ouk2Uvj0ngCs0oFGArIAEA4wCEFLsmKheYFVjEDA9hYlg8u5SIWXnQUzgMomYxYmOFfs2y1P8b/vktmxv3wjAbxICSUiD++ZBosF/G4CK62NV52BVMUMMeO4WjPA8SFoYKCQCwbohScchmHnvM5/nrRc2Kfthdc1miRIsL2Tqg2AC+3QWpBdCtgbW3/h1oY1CzppikZkF8CsCOAEsDnDd15hbWvP8cjfywHQ+M8JSgJ8BiAu39xFv8evdMxi2QXbXChsnGKcQARiKKvWSkLohSMGMy6+TTeAQhbI2ELS7N0T7pUJsQn4H4rjk+V8/CU8r2JFHiJBmi3hEc8gwuuPYl/BoDTbpNtYsBRCjgvnsTUUs43Axkh8qtAaoj/V4h/gSgNk0hDO0U8Zgnmf+tIvhQd47fvkzlK4yoCcc8ZAB+tIXYMyinjmxccwotqZ3nhQ3KsjuEGAqnKdQZi2aBSKDgOZn39QN7l7wuipnf6XWprg6kFMIhQAHLzgGsrYG1t7/7WvOu4tJjJrnHzpfUrXgu+VTzycjkn0YCFbgnQNuAUsYGC3yvgJQHWKoWPUeHAWAIN5SKM8jkcAhAqeHYMVjmH42/7Ku/wOS64UY6oElx6uYxLjceTdgwfdgoBaAUaUTwF7RThAXgeQEkBH4insY3nAp4DTwXhEoyCUR1g2hSgAfASKehyCUUIOgn8HsAEpfH5RAKfLpcA8SBK+2CsNTw7Dssp4uQLDuVNbR2ip70MAjDTp4MvTwKzM+kuvF9m2Ck8IAYpzwWUr90ZpaG0z68tjGlcOreVb0bfyZW/lokK2Nmy0QBgzdwZPoiGAatbAWtr+79sHtbRvgwPv1QmaIVHY0ns7RRQ1BYS2gaUHgAGrwzAgwcV0XIAN9EAy+nDhTd/hReHhHy9p4cxVLOvlym2hWeVxiTPgShVIec9EjqW8MHFcwDx4IGV4FOMVruqB1pKQSdSwXcEjAc4BZjgeaHJ6aYaYeU3YP43D+dlAYHu1hL2Iff1/QflkGQS93kejHgD3J5SQKoBLOTQA8GfSbxFQhOYAmA3y0az1oDxYJTG74pFXPjV/fhkh4hu56hAa7SAxYDkJNAaud1SBGTCAKmw5ZvyP60AlkrkuRzo39Kx7NNQ3lwZum+Vn8vA960AloZpJO/QfLRyjOeinpmmqtcEov0wYzCn9a6L5r2Gz/Dd7odfIy22h3tjCXzYycMFI0AQdJghJ+QT0F6iEbrUj9tvPZ1f9LUoeBvzNIag9aVF0mqn8ZjxIDDQIUAEnTEB2KgoVyWAkPCUHz0/oG3VApNAqGAIH1iHBDSBCOH5Awu4OB9E/N8zcNMTYOX6cO1/H8rT62mO0RYS6z98UOY1NOGyQh9c0vcuhiBpWdCx+MBGYIy/ERgDISAgVDIFeB48p4iz5s7kVZklYmVnbnxexwCwwnt7wxQcDvN3R7uzjlTw9DsEpqpGeN6JeQo3EW8Ec4ExeG4Iyu4w+xhqRFt8Q2MmIyqbpTn4EmlKNuKKWBwneGVAjM/HDAIGwLMT0J6LZ1YX0Nq4A9zOYdaF8gWQ7pzr5cz0eFxRzsEBYG/MtIOBWDEwlvCF3ClAlAp+HPl9EZhYAkproFSAUYFmNlxzsfJ/CTyYBTxaPhifnw6wHZseXzi2H/1Kbmgcj9m5dXCVDuK3omAaejR9h0XFCxkAs2cpMJGGyvXj3Lmt/GF43y0AWDcGgFUGgKamnce78KZ5xO4KnCyQpAAblHANNF4Rxb/lVi1/eyNq+5iZAA0Tp+wuRn8UlI8ITAsEzSBiFKwz5CoFvESDF/ob3GexcmVh84BrL7u5eX1S65gxxqtoBUppWb16WQ4DoSseADRuM/X9ItzPE/moguwokHEE8hCupFLPk/JY35rl/zsGYFp5ZrJ5150UvVYxZm9STRWYCcEWv5rE3wk+59H9fWHt629EAEdG8dxagLTSTbvsBnjTAdkJYLPfL64R8G8GfLHY+4/X6/RZTZy4W7reA9aufSW3UdDfaack8gl7Us378K/dvkDAD1sIPXNtV8ipysKlWqPRc+qS3aIteK6D/7z9K3x+pKVVQgE8/WeyKNGI04p9cMj6oAWBZ8ehPQdvCfBtTcyMJdFWDgAp7A8VoIiCeLiECv+RbMShxf6g7yMxFwUmnoLyHCxHDHtfsD96MpkBr+XGWujxmzYNuvlNPBlP4eOFHDyt/D4M8XyBwFBBINBKgRI4CFJp6EI/zp6zL3+8ZIlYM4evaW0SsDxjvlzo7VoEAA0TWlqFnA3K/iB3YB1NXiAQkV6CS0lzU//a7nvHELTCezDdNOUYUH0ZkH1ItdHULfGzNv4B8g6hd3V+zYo3I8I6DC2o1QKWuqnmqacq4GIRUwYYaJykwKy3PO+TGzas7AUgqW0m70VRF0JwMKliQ68DUwLxEI334/7e15+OAMGIteTUNpN3oFH/DeKLhBq3ifW3jsCvjcgN+d6uX41sLqrf5fjxk3d2LXUqDI8EZXdS1TXvxJicEH9UIh39tG9Dz6sbAKh0087TAPPrGjOQAIy2dOuG1f94tU7fFACTam65R0F9QsREK+UaIbSCnD5QIVSEbR2iO7/GG6SIGWLwqp2AplQtSCFBY+CZMlYCQFMvRhQtn50Br61D9JoUvlLuxyPJRtjAQHBlxbcpcO0YtADrqfG5y7/IaxqPw7FOCX+OJf1dIBD+UMhTOob9iyXMLfbjotQ4aJGBCeEQxnXEUDZWDBQPa8XFERfsz7VtHVDDASsfjCjT2iDZPViGg6PdMt5IJKAlmD9GLPNgfAKAqXHQ6UZYSgfjUCAMVCEHL9WAH924VM6ZOZNuZgm0jFGhQgX0Jpp2npxubrlfNJ+g4iyAO0BERIwr4kU+xoWIIdBE8ghA35NunvrbdPPU/UOgwehqbIXXeenmqfunm1ueodJ3kGwFYIkYL3y+/+/KxxXxXIgYkLsQ6psw6oXUxCnfCDRGE1now+iENIBqW5A7gdwe5A4gtwc42R82pKG5JUOjnyHUkQBiA3NUp19AnFBHirKeSk2cclnE7OZIgCPdPPmzNPo5Up0OwbjIfHjVH/87QCaAbFNKPZJunvrLRNMu7w3mYjjPtQB448dPbko1TbnM1eovhL4ACh8AwIHnVK0LAyKtqGZA6avT8F5INU85pfJMfy63r5pTckfjufYm+rItyO1Avidy/Y6k2k6MpFRE4qSznd5pp4nd8XX+qVjGTOPiZSsZCL4vaBSBsWOIx1P44QkLJb14Lp22DtHDrnNFyrSXIZ1tMOuJo0t5PJ4aDxuAEcAV8T+JFCwhVrsFHHLpsXxh/o8kmSWNcfAV8eBSD5BwBJRbhsTi2LehEX/0BPcV+3BtMg0FBoBbk9vIQd0ClIJXKuDECw/ni5klfp2vEYExaTo6RM87iCu9Mg4TwfpYHFqMzwVU0ioFbiwOKgUp9OOOXB+uApCzbR+06IeMqEIeXnIcFv7sackEZuHm1hPTIgIQx2mYZ0h1CERMsOBDobJ8TSP8wApNjFBISH4SxKPp5infi5geHCFYCQCkmlt+BOJRUu0d3n/ADKs8X0c+Yb+U33fXJThJQV+SntjyZOM2U98fAOkwQYvB2MUJ/jaACIhCX7OdSze3XAOlFwCiIn0L+1CvXyJiPIgYBWteqqnlIUzcrXETRHRUy/BSzS0HAOohEDsGIBidDxX56Eg/Iu9HHabpPR3MRZR/Gwqs3IYJLfu6Wj2jlDUPQKOI628KVc+uWhfRNeGCaFG0bkw2T1lsFOKR+RyYU4gHbkrTrFznRq733xE5uLzM4sV0WjNi3TOPK4t9ONi4eN22A5eiL9jKKUJ0HCdYzXh+1iI5rLOdHshhJ/xmszSZBeCts5hTPTiolMciOwaVbICVbICVbITllfFsoYDWK07i05mMWJeezUImI9alJ/IPbhk/SaQGVFifDAILfrzWe2wLvzXA+nIRr1o2tG8/1KyYWrLeT2J2LI0/VczXUSQwt7fT6+gQPe9APl8s4mAIVqXHwwp6YAgg3QgLQC8MDvjyDB7/5Rk8E4LDqFDWls95kAOaVno8Ftz0O7mMpOnYrHpiQbYneQTI7QMBDBZ+BUS8yMfUeOi0D3q+QJLWeanmqR3AtNgINC1/TrfbLp1ubrlPUX89AE0TEX5GTAlT0yepvhctP6Pfcwn1Cc/IUw0TWvYdPmhJbWVWws/9yKf7cBmpvizGc2tIbVMzR/VIaCXilpXS+6el9PNqL+yQ8yLJ5p3eQ+AOgLZfsYBWzbsJXGIBw+sT41LzXBfkZFec8ZswRS0AbrJ5apso/Abk+0Tc4H4VUIq+i9q1wQpYixgRz9PUX1Ji7vRBCkT9yrfD0bzrXjvkDcL4qWOukE/bSTwBDxJNi6HAs2LQSgPGweI1a3HOfeexL8qHbXqtDJRMnne7fBzAwQQSQjw/4W+4OyzVEmo6IYDkpmNbBSyjwgRxgagHUwTGsqCUBtwyViqF7QMuixgcFR/llUwsBmUMfguDeecfwueB0cdEhddd/pDsEkvjUgCftyxYxoVDjSecPOadcQD/mlkiVnMBet5BLC1aIuc0TsDCXJ8fexamGykFp3EC7PXrcOXsffi1TfRpYxwWIgIXXUDBvRh4YBnlieDvdtSD14s4pGUbcTvzPd3toWmxESEJhHYvlW5a8wCVdYCI5wCw6/TPALBCF+5AfwB/x60CkLC5IC0IcobujMLa158bmsfxOax0c8uZpLrC12RoVfMuZCB4KgKeenCfJNQy62xwUiatmDHeN/K9Xd/fCO8XmIJTriP1nIDDsaqtAAURryRgPwUpKCYJBo83XvCODEglxrya7+3ePWK2S12erGnywUrpByS4SZ05DUFSMQIZG1kbQT8E9TgsUqb3r+3+29Ac1pSlinrfmnVrQCoYc/xGES8ErWN/IlcmG/BVJz9Awoc3UoAkxkE7efzJI4742Wy+PijVZxM73FDEdj3wC4X1nDvkmlQjvlzM+SEENUGlEph4NAZ5y0LKmICox9ABpyKQeBI0LowiOh3BxRcexBd9YA18iCNoGREVptssfkqmOw5alIXlp+/LZdGxiAg7O6EmtYGvPokXEklMK5dgamLQnIYJsHPrMG/WPrxiI6A1HMCKLiQh/cqzRkwPfSJ7tQiSAN5LYtcglwv1tZZAIMXJ5HtWfHsTRHzQt5YbqPRsEdcBaA8WEGqS8Hkh+QfAlSTKEJkk5C6KqikguE2dndsDqWHkTbFkz/zq7rcj2shIAKtK0AAoUkGMKYB4BcCbIoiTmEpyqo+jUm+uQyAou55MK63v7q7TH58ra9h1krGdV0k2VpvOpIj0kbjQ9cwDcTHryzqe1srdRQwPBzFLUTX78yEeqW0j3q35nu4Th3gfCoBpnNiymzF4FmRjgD5qI2tjTbA21oogSWIygF0ia8PUhH6oLQFYGzV5lsIv/2IbLHCLWKUsVMo/hOYhCF3sg2MnsKcyePikn8oELIAMn2uhhOVfMkvEyiwRq6NDNCB1Qezll30ehxq/C1gXspbUZkSFVFDG4LV4AkpqXMy1K10p0CnCGANlJ3CMrfHs9x6QTMA7YaSmWJY0mYwoEeFpn+bLZ3yGD56+L5eJCDMZUSHgkJSXJ4EzSZfEtZZvYJkaHVgXczBU+O4tf5Cd2tvpbWbNLfEfrRSMeRziHq3K1u653u7/yPV0HZzv7fpMvjc1XQw+IiI/BNAX1CqqWfy0fXNMfys5cereoVt7I2B1DJWa7WtWg8GKVBoiKyHyTUI+lO/t3iPf2/XZXE/XQbne7r1ZUruLMceKyJOBMNVqDxoiLpXagS4WjYJfq9UIDUkFwQYjcoEn+ECup+ujuZ6ug/K9XfvlUu50I3IgRH5ff36CrBCqpFY4e4j++KBgO3tT6XE1vxOYYua4XE/XlaX1K5Zv2LCyp9j7j9dza7ufyPd2zRe4HxIx15BUAySHWroR3owAlCeymEqNi2iRVdolqZSIecSDOVw75d1zvd3/Ga6NXE9qmijzMWO8KwAWgnfhDYMzG5NguKEkzjwBqFvO5FrPw512HKhHYpOwS3mUk42Ybrk4A6S0LhhZGeTOdnrZmXSzM+n6glxfm5k+3a9FpQzWidmI94+AMfDiSSRAfN8p4ZL0OCjlhxBU1bOqIuP90jEo9MMzLmKNTVjwvQexmKRkMiNf+NksDUnJiKiODtEZEUVyUEWM6av9+FgPeNEp+Y6EGs5NuWUgnkQjBHsGc8HRgxUJsABx5/T3du3X37Pi7v7+V1dHuBYFLCvn13W9kOtZfq4i9jZinqgjlEE5bGoauWIjAmKamnYeL5TLxYd/XQ+sjJhblVv+SH/P8ov6e7r/GnA0IcnMXO61VbnerjtzPctbjcgcgMWKkEa4GRHjUunDks1TjhwZCV9tmpJUIniBNJ/I9yy/pLiuq7squHLlykK+p+vRXM/EVmPMXcH81G60KjC52jBpUkPETKtauiR3ZXX0uG/ewSzL9654MOIAYYR7tAo9K/+Z6+n6ihhzfBhio5R5OqLtDPIIpidMPc7XZDy3Zm78EgMiG8STE3I9XZ8vrO26r6/vjbWD1saaFc/ne7vnQfhxGRqw30HAArDtdF9b0hpP+ZofVD2QIKHdMgyIwwHAj3wf+/bypNBZiV20FRjTdcBHBE4yDV0uoFsZ3Js9khcU+zFfW4C2QJhqdan230pBiwD96+EkGzDnB/fLkdms7wUcTb+zpGlvpzdkRYY2X4uzNBq1VdlZBzkKjAfQYN1malYCoACag/t7VtxQQ3ZLhEMK0zKsvrVdr+R7Jh4gYh6sI5RaxHhKqf9MNU35fB0uRAOQEr0zFPV2GCD7q8HKmEvzPV0nBsIRFU4TcQBUyP98z/Ib4JmDAOTrBEoGCQ34duAUGGm6jAFJgfxTtPlcf8+KZQHXxhqeLfCsPu/ke+VEY8zfgtyNGnNHRCm9XcpLf3Kw7LUGcU3SUHGMVL+xROTd1Toj3KAPdq63+w4xmA1IV//a7v8dArA8YFpMKBf4K66qhq5/UruRDYpyYG7d8ts2vTZg5XpfeymXcvYzxiwZArDfOcBa9XIQUylooBqotlmllfhDeQfOvBMuWw2/NAxxsuf4mgerQwYMAJNqhO06eBUejskexVWLnhM7czgvc4o4UmnkrTCEoHYc0cnxwwuoNDxa+PAAYG4BIH4CJCni4HOWFQTEsorJcNONUOUS/uKU8ayI0C9GOBqtQSmB+WpubfeSQJi9IcjyYIEuDXbh550c+44TMV11hDLgPDC3zjM9YFqM4Bxfu+IgsBIx9+d7u74eeroCQTRD9MkL75lb370EYr4UmCSmxjQ0inqPVFN+JiLFFoe92ECKQTa/uvutYJ6cIfoTEOTdRUDms64cBNu94KMBSLGKfAFAxSCyfiDgHiKGSr0v1dwyK+Kdq+dNdQDo/LquWwy9tiEcHxqApJpyn1FKTROffKrSrujzvF/q6+n+w/DWRjD2lSsLyom1izFvBt0y/xLACmOnIDiqaioHo5OxbJAKj/qEPcb8IIbTFsHqbKeX2w1fTzbgw04ZXjDBoePCjSWgYjGoUgG3963DPt9p4zOZjKi5H6Oz6Dmxs0fxvnIJbdQoaB0I2SD7plpjMy60Iv4wYLqNbevoEJ2dSfeaJdJiJzCrkIMIBmrIi8CNJ2E5ZayG4MRTZrK4YAE4UidARJN5PN/THaTmLCsP91oAFtau7TOefJ2DzTAtYiiCGen01O0iZo8GIOmJuU+CnBq4tKLJw8oYs8HAPb1mFx9GW1YONIvbjfHur2OSBO9Xjh+FyayNmHWW597t92vZptKjXAAq39v9qDGyDGQNgDL8c7coSEU1JxH5e0RzGbjQjxi+Pt3cckl8/JSWGhDRkd/3ADDwjsoQpjlIHlVHI/VIpYyY+3K9XR2+NjnsteECsPr7/3eN0PuGz6VtmbzCjQJWJvASHn+VHG7HcZBThEGYalKtXXnaglXKYYNysBgAZowxwobVIM6+Q2bEkvhuuQCPEqn2oMBkIyxj8FfHxcHfPoJf/NEsrsrIgKdx7l7wzw78Cx5xi+hVuuKurrslisBJT4BVKuCBDXH8JkqUj1XLiKi2NpjTFomdiOEWO4bGwKMZarZuqgGWGLyZK+KgWfvwf6JjGjmJLCD5vVFqwy4AVVjffY8Y82eQUYAgAKOUHicxs+fA+moNxsF9g3qPkX6LF6R93FroWflPoHU05oQBQFHqOwFPVOVHEQgF+EQk5GI44zZBkvzfNmxY2TOEaTWUPBlAHhs81goyja8x7yr3tjzvD0ZMb83PQwPCJtU3LMUX000tnQ3NU47EdtulI1qXioRfqCHAyvX5NOwTGBdVwCgiMILv1feqDm9t5Htevy0wi7eIaag2FtKQzdI94TLZw07gxiDmlbXalQhcbUMrDaFg7uK5XNHWITEAqi3w9m22UC8Ra/FcOufeInvG4rgbBpbxoIK0HDeehFYapXIRmdx67P3dI/lQW4doEakqhRyWXeaHcWayETu6bkRDq0mkBoCG8bALfXjUM5iVnUl3wYKx3TU6OkRnSbNgAfiJD+L2ZBqfCoJfdZC64zWOh+WU8VyhH61zPsXnOsS/ZjSmIEAlYl7PNesnI6bVqNaMKPw8xNQas0eqzZ6lEvzow3XYQiUQUMld/g+WjmZ+PQAorF3+vGCQZkM/aB2T4+On7LQRr1ld+RbgjdF4vQT4a51HhQn7yTqAJQD0hg0reyhyFZVWfsR37QZqPBCNVOpoUP8i7aReSjW3/DA1oeXDEW5powc5JCe+d3tCJgdub1aR+2JeKfZ2Pxud15G11iBljncNBdhbBLDC+KvjLpP36TQeVArNngsJAzQDUlsAmEQaFoi33BKOvm4Ofx54/MrZLN3OwNu3Oe730xaJnZ1J9+yb5eNWCr8i0Oy6Fb5EUo2wXBdPeUV88jtH8Ns/msVcGGwareiZEVHZmXS/c5dMsWLIOqWBnYjVq82NJaAsGyj2Y2FjNw45/xD2hrXgO4I0pI4O0R2bcf5gZolY7e30ruqQhqkH4r5kGkfn+uEqH6w8ywKTaehCDpeX+/Hp2TP4946OUdfICvgJAuCLePXVUmQ3Hg1pD0L+GCQQqEEyqTC5Vnsg1Q61ex0AJUZyovDXkZmCdbkZA+DPrOZPAnZVxZWlJo0AsIJi4jKqWvxU7N/IrdVGNEWVm2hfZDxvCWnFAtCqzTQI02EMiKmK6mwqPp+e2HJ3avzkPSOmIuuag67aFlTpmrkwQVT1XzB0WMowmr/hGMGz9VnhzW+DMuIDYXePu0J2t5N4VFl4r1cKDkkdeJ2eZUErG3SLuKPo4Bu3zOUKADjtetlXabRSgUrjTz85gQ9ks3480kjNmKCyg/P1W2S/WBp3AxjvODBKIHbCj+spFpC5+AVcgixNZolY2RnwOmuFWoTTO8GMiJL78NN4HONL+YGqp2H5FyhIsgFWuYi/GgdnnHcIlwSmsVoQePrCW7YHO5A/rsC7MrJxuVf8SqY2jMOd8ST2zm3wA2AFcJMpWMZDTymPL8/6JDtDwN0MsBoQQpG3qs2XUQKWyNuDASv8hTDwsVL8jwI01ljffqwPZF1OFfvGYjET4diq5FVAUAkm4B1qHDm3OPB+Xn21lJy42+FFKf2cyjrIj401buCoUBHgAkSMwBiAFqG+AI3DUk0tV+Z7rfOBV0uojlGj70hSjRIcqjLw7iTc0t4cmRY65Pbxlm+dj308llUHrLz2y2QPO4WHtcZObtE/7SZaaTSWgmUcvO25OPOG2b5AnXCzpNMerlQWTrFiAyM+4xb5rePhpOzJ/MdwS9FETrZxz7lDTrZiWCwC23NgCEgiDe156BYXsy4+mk/6h1eIyrJ+3aiOTqj2dnoLfiEXpZswMx+AQ+XNCIy2oCwbLOZx5ZoSLlx4BPs6OkS3tcEsWOCD1cKHZO9YHKeKwQdJvGWAW+Z/lveGfeYmamaFEe3tM+le94Tsb8dxkx3DDrkNcJWCBYHbMB5WuYA/Fftx/Jz9+EoIwmN0QAU2nXy6BeV4ZN+PaZN3xxmRAoBr177SB+DgdNPUswHMp9LvCVJhTISjCjgo3+MaRoYrreenmtwP5WPbHY633y4MMj/pSh095V3TrAjBrrLt9I69SqbH4nhMKWzrFCNaSKBZxRtguSU8Jgan3jiH3actEjtehCp66Ig34KBiHzzPrWSUMpHGPsrF0tOvk4OuaeeLmwKttg7R9DUJOefn8r14Euc5JYgIDAmTbIDllPA7p4i2hcfzjcwSsegDlQzFE7W308v8Qj4VT+KCQj/csGpp8CZNLA4FQW+5jFPPP4j3RK/r6BCdzdL74SNyoR1DNh6H9jxAa4DEF658XK55cg3OJGA2BlpBwKgB4C1eKufacXwP4ic3KwYZ8+NhlQq4d303TvxqO/tHUbxvGIDB7UdAIg95HyG3DbgBM2gnlTBOrBXAUj/SW6TfDxgXiToABJiQdGPjC0Bu86WdO7IedySAgOveJTJZUQ9zvct/NG7cTj/1YJ8ilJNIfnAgd1A8VHsUfXPRuGWlrP1S5eRNeeBo1BTzM6L7ghWqBi8NbF+HXxv5AvGwHTVRJ2xijDiswKw54WrZ1rZxv7KwbahZRbQQL5aGLhdx7YaHceCNc9h95kMSXzyXTiGN6xNpHBQU49MELBIWCV3Mw1UK77HT+NXpN8jOne30MlLfju8IwOzMW2Tcf3XKL5KNOK+chycGoPHNNaeAR9esxv4hWG1coIWhB04RP6EKCocMGNfGjkGJwdulEj57/kG8J7NELIiwPTg9ur2d3sKH5ZKG8fiu50Dl++GWCzCFHLxiDm66EafvOxF3LXoeVmcnVL2UpJBcX3SfpK5/Wm5rGIcfuGXQdWAC8HQbxsHK53DDiR/nkV9tZ38Y6jCWGo4f4i8fAnaNY/i1kuoDluHeHBRvI+Ef3YNIevCNOvcxSjGlBNMx2J0/UuJdQ2SvGjNVAuK9AOg3xkIY30HQqhDxud7lP8r3dH0Ugv0F3k0CWUsqHTgYvGqzjzER11FKHdXQPPlohEnk4e9YZpWI6a+ZCxVocB+N8IGjaK0BiWn+o+KS2xKkeybccgXX2UlMdYpwGamUKYCJ+SfbXPXTU3l65zTImZdL/MqDWJp9vXwz2YgTSv2oZN1HqTZFWE4RrraxvRVH52mLJLWs0y/NXEv0t7fTm3+rfDCZxFOxBI4sbIALHzQl3gBdKuApuw+HL57LfNswBDqTgSYpO22PY1KN+FC5CI+oaFei/MyrspPHMd88jH9a9JxP8IOUEAx/8KB8vWEcvpHvgxMktFgklPI5Pat/PcqN43FEaR2ubW+nt2gxrKhnNCN+KMSVj8qOdjMeTzXg+NwGuEGMsRKBl26ElevDzSd/gnMyImpLhE8gDEKkmpye6HxyMwDCBGpLOwaT7kHpG3lxgIRtDZWeP9dZxEFylQriglpHA6AaABJNU/5DUb2/RuMTv6wrugs9r75bACv6XkItygLg5XqW/ya3tvtkaNnDA77iH2qi6lTR8OOgjKjTa7Xp/JoVb4HsDoRUatbG+5PNU/eKzusISXcDQAn5haA+5ZhzWKrNN3nMiT/BvnYSh5VDEyVyMGksAeUU8NufzuGZbR2i2wDrynkszVksh8cT+E4pDxcCKwpUNfl5VjkPN57CnvEUboiUi7FEhKctEntplu5ZN8ln7Tie1BofCkw3K9CC6JawkgZHZU9hcdhlmRf4L0oEpxgZiBwPa9MnUlBOAddc+AUujZ7QHILVwofk0EQaPyrm4IqBFfWSRv6KbVgHp3E8Zl/5mJwzdy6dTAdsiDCs1nD1U7JzKo3H7QQ+nlsPh/TvJQKT9Esh/6GrjFMzIgoLggqwW2jnJggj/C8MHa+zKQrBpJomH0ylPia14BAEgTKm/zQgKL7nSCk8WWcRaxEjEB6XnLjbjsDS0XioVOB6O79yRncEEAkKIb/FMFz+/0baVe28uoimJK3ufquw9rVrcj3L9xYx8/x8yuoTfMSvMPKhpqadx0cAS/vmOZ4NHANVmQokSTHn+vfZa1RrI93U0qaopgeVK8YesKYFqSZGYabWkJCUZXSF+4r1xW0dopt6Ee/Msjz7atlDx3GT8WDEQIcFgsKDS8O0l0iuoVXMwY2ncOy82+UnWQDZLF2Ssngunfm3Saudwv0AJpQLFV4HEEBr0DU445J2rh5+JdAgBst/ce8xXlClZQBUlVsGqHBvRkQ1vea/vApY3S97WHHcalwY40ErDo5BixzMYeX74CUSWHjVY3Jctp1l0Cfqf/Q7SVqCX8YS2C3fDxcMtFD4h9F6LkrGwWnZmXSndw6vfvzm+G9EjKepPpdqbjkJfjpHbASajNvcvOs4Ul0ugwXfI5WAWJJ7+7VVEXAwANi/JvV7EXmtci5RxCykUuOUFK+JgOgwF7qfLpNumnKcUurQOqV0fHLayO3vAjNQA0BqwtRD0s3v3T+YI7sGyLwarUtyPV1XQPDNIAC3yjwnZHzecrapXbaCMO4NtZuHp5Q6uqF56tHA804wv8NeGw0N798GwA8FsjkVMobBYfmjKFadCBZqIuJnGtMg19lOb/Fc5k+4Tna10vglFcZ7rl/OJSxqAf/cP4a5ehiovQ4CVikPL5bAV87aDUu+dpscNP9n8p75t8rx2sI9BBKeM8CdAfDiSahSHr9d2M772kbE6wTxX6RQsFqr6jQcGQjkK2dJ82YDrNAkXPgr2VYncJ9WGOc6foHAyJFdRgCP0XrxBMVAuQ6MbeO2a5fIN69agnRHh+hGB5ek0tgj3+d7AiNxbCbVALolPDR7Bl/azMNTR/TORYwheG26efJn4Z+aE5bZ5RBrxPYFZdd4Ce6dpNqlDtlOPwsG19bRGDSwrAzDG8hKUbwqQSH1YenmKQtRySFstTB05YegJPGycsOEqZ8GeZ0M7o8HkmLMX3Lrpz6JkR2X9S/zopLmCND6eaJp58n+hrKXXWceolqXBbiPBDWpdI0E27bHeA3Xx/w4PG6M9/eazSNYGzAi8tNE0+RPBqk5m1gbrX4GwXbbpU2sdBeV2qkm/WpsF++yIDdOKfzGK1cdrByqD76QK1w2+3o59pTFckZc40mlsLNTGji9RgRG22AsDW0EBeNhjR0DYym/Jny0qkM5B8+OY1/bxoOI4X+sGG4j0eQ6EFan/oi2AKVxMyCcNtLE4xmVSbtP2/7BpiHHRsIoDVDjnDMvl/i8g1ia+zE6P3hIdlHEw3YMU8u+lzRwG/sn3MTiUKk0dCwFRRkIdqQCjed/Eg34jhb8ee0kPKsszMv3w1Q0RgycmEMFKIVfiwi3VFL1EIJBAAlA3x9oWm6EvA3LlkSLsTnx8ZOnppu9R0n1uTqaTFga5ul8b/cjdcDBA0BbzNVGzBr/dEbUA61z0k0tN/glWJZGPb860qdQ03BTE1tOFIVHAKYxuLyZ0C8CviC41797WENY2fMjhGrWNI+ntpm8l6/phHXkK3PACHB7FKs5ICtMNU8nJcdjfhDIdHcXQfl+nc2DwbQ1aKpH0k0t7ZteG0vd2MSW3dLl5OOKulUGV+IYW8DqDArB3fJlPuc6eCSWgobAjShbynMAbeMjdgJ3JNK4Sivs4JRgQmGGwIsloUTwtlPA2Qb4oCGme0Uc4JTwUMI/DMJU6mYQ2inA8xwYpTDBdSCe65tINVKlnRIA4CWAsmyEiccLZsADhJbBjYV+rLJiAx4QArpchMRiOPI978PTCx+W7y58SK4j8awdw54lv1heEKDn82jxFJRTxl+L/fhluYg/axuM++P2KpoWIPk+eHYCuyYS2NNzghfNQUWpaTzACN4mKdNnvKPcCoPi/glF9bN0c8s9qaaWA4NaTWHZEgMAjRNbdks1t3xLa/VHkvvWAStBUFQdSuZthJdR69d3rwPkXF9QBmk7PmgpNTvlNTzXMHHn0wMtA4jWEZ+4W2OqueWAdPPUexXUzYCkMNgEcUlliXgPFtZ2/RJje4bilrJ0JD5+8lQQHxLxBOQuNPqp1MSWcydNmtYQAQ4T4avKAERozq5Jk5IAwN4qrbffrHE2eABUvmfFTSLmt6SOnv4drg0DsJGKd6aap3akJ07+DHbYIVWzNphueu/0dFPLd23BM1TqPzZR3XZM2kAEmQh5Hb7ilvGcZaPZuFUeNXgOjDiVbEIVHjMvAjeRhuWW8Zzx0LboFHZF7v9rAL/+2q3yX3Yc3/fK8GCCY9yD05mNV53yE9WuqEDPhWcrrAGAaS+PTKhJSluH6Au+wLXfvU++Ysdxl3jwRIKDBgiWCzDxJD5mx/AxACgXgoNYB8bnJdPQnoN/OmWc29OLu7PtLIsIr3gMMyD4YXoc9iz0wYVv8jGsDeb5hVTq1g+rnK7Nd3znj0Y+i4gRUh0ByhFpN71SmtJ/J2QDSFsgOxnBBxSVLSKIHBQRvZ0TlEj+7/yaFX/aCDh4AHS+p/tnqeYpn1PUx4iY2nrugabF3QBcrWFy6aaWV0C8ARFPgAk0pfdBcUc/HmmIEsmgJWLWGHhzMfIzAf9VgGU01T6ksoNDPgggqaB+kPfyp6ebp3TQ8CFPOa/FPKvfsSWpXL2rUTiTxOEiJlo+xxBUBnwqiHiv905cRZxqxDzna6hVJrXy9yBAUbUJdFu6xBXS1PIqIX0gYwJ5L8APBKWBateG2VJalgWf/DZty0Tf2snlJ/5EvqCSeEjHkPLKcENThpF66JHmJBpgOwU8U+jF526az3WnLRJ7hzfgZRdA2jr9a65o5w/OvFn64ilc7ZTgAsGhEIFWUjfpCZVEZKdQRHm0A+xsp9chotvJu797ryxobMaCwga4EpK7CsopwjilSkliXTFzDdxUIyynjBdNPw496zA//cgPboUBuGThzbIvJuO29Dgcnu+Di4Ej6lXlldWrHxaEVShiOwCY9MQ7BVxkJF7Kpyn9nZEgd1LkTlXY5gOVW2MKhD90/QMW3NvyvSu+i4GKCEM1A0Dn4+XZ6VJ8J1LtU6dUsvZTTkRApEHuSXDPgfMcBZWf1zswgdQQKdHwC4V1K//5LtCuKpsIidaI9hTmDRqAU0l1nmg5Txk772jJ0VMJUWhUrAC3qr2lAFdt7D30re16JTVh8nHU+v4A0r1aHqxi4lFNVuTkYayNeodQjD3p3tlJr61D9C1ncKmbx4EieCPRAEsEJjhMNczEFwBGBG48Ddst4n9K63HoTfO5rq1D9OK5dLJZmvCcw852P3Dzylm8ppzHgkQDLAG8eucEDnGOj2VrxDdnkO30g0C/eQSzuT58K56GZdlQMHDFL0iogvgqi8HBrCJw0uNglUt4qdSL/c86jCsWLRI7BEHAj9U6dxZzS1bhqGIeD6Ub/fSaWrJokHYV/l8BAuz4zgkFAZgV/rska06fUYB/RmHlfMCBVBBrsBYDIS1bjLkl39t9UoS3kk0IpuDNN/PadQ8zRp4gLRsDlQai61IH/ubqPg1oAjVmqThBPfj1gHdo/7rlT71LwCowj/eyAXxeqqcv4KnEBAfaCogUoSaBaPS1oFrOSMpU2hIxiwo9Xc9sQuO18utWPEDx2gA4JLV/Cs4gDyAHvYfBa8M3F6k0IK8BUt6igBUKYluH6Fu+yqfzBfynU8Jddhwq1gBtWb4pRw3GEv4Zgm4Rj0sO+/10HldnRFT9cAPK4rl+HaorZjFb6sMdKR8I3VoTqUq7injgxmKg2Zn+kWEXHMzvlHI4hsTb6QmwtAYF8AKgcUXgaQ02ToBdKuL30o/9zz2Kqzo6RM+dS6f2nhkR1dkGs74XxxbzeCGRhiXiA/JGtKtQewT800eweuw5LKn+iBukDd1pyCMA5EitUV0MTqH6cNC659KFUdZizHdyvctn1fAqm2oGgNqwYWVPvjd5oIh3NUkVOcSgJnK7bp8i9xLXt/4tW0T+Ip7MyPW8/uthaHuV9Tl4rsIPZezmf8h7BvP+vCFxLX2bw0J1xVUVAYbK+VqIJkIHjgjSionnPpprxFnYdNS6X3ivZ8VdNDhABF0Bp4VgXuttInow8S4u/HeoId71okx7pM5+7WeU8zZEpn0IWneewddvnM02YzDTLeF2MeiGoACDDcbFM04Rp15zEj577Ve4KpMZOM5qqEWxYAa8jIhiDKeW8vhLPAkLMnAQ6lAmIQQlE0N+LCS4M8gN/MYh7CiWsFe5iJ+QWJduhE6Ng5UaByvdAK00evP9+E7PCnzmrMP5dhitXhcIg8NNzzuCfUUXR3kO1to2VDTsAUNpWv5rSPmdG2u4EjtgyazgbxsgDdhUWLv8fgg/ISKPkEpHoqWDkrcS+VQEh+Hvipg/QnBArnf5t1Ad4DjcFnBPy8q5nq4zjDEHi8hfavriRZ4fOcCz8p34QqItCDaI8S7O9ZhP5Nd3/yUQqGGGv4iOzk/Vv0Xs0U29qDr3tILjuuwh5sP093R9xxj3EBj8lVRWULmzdi5M5BO+IwRzZ4nxbsj12oehu7uI+iWm64PWuq6lKPHjYsyNvralrSD1BwPPr1oXIY2gSMuCyOtGZE6up/tL9KxyzdjD+dDRmnpDYEXtuvWv89+HsoYSbL8CApg9hU8AeGJ+hyRzBUyyDMpXn8S3Ii+HHEYlgYAAV53tLMy/WdqMhWe0jSbPhakQ09XqlWgL8Mp4K+lhlc+1bb4WEiY0tx/KfwL46o8flotKRexvPEzXhFYafzEOHvv65/1SG8MZX5h3OG8m/3HtEjkhnsTDEHhiqoNVOZhNEhA9wBaoFU+uhZhVAd+j6B8VpWGkB4DO9b72EoDPJydOPVQJ5gD4NKiaWLdcjABi1ouY30Lk1lxv950YiBz3NkMDIfyywg8BeDS9zc5t4pnZJD5JqtQmQAEQ+V+Bucc1uLa0vrsrogkMu08U5gCzyif1JcidpQcYLcG7GbnZwnww99F7GsAo0HcgDTEfOt+74kFMmfJYwwacLFSzAOxFqtjG58IYEXlaGfywf13X/VGnyjC77ALQudxrq5DDqanxU66kktmgHAxg52ATqfdcFyIvGvHutDz3+qA6a3iE/ap6lyitN7GRyJrouo3QGVTC/CaFpC0oUldt7gnbOqA622FGqjaHaTVn3SIHxJJ4JLSGlc8jRU+9cdPjYBX78dNL2jh7rAMrK6VehrhnR4fo9jYYcOR1rq5dIueOa8IP8hv8/MqoGcgB2tttHAerbz1OP+VTvHbJErFmjmWy8047JSeVxg1aaKvHl52aAn4CAOltp24HFx8k8X4xsiMoMYFaD8HbVN5rorjMP4yhitsYq/dRda/EhJYplpaPegYfVeBkQHYUIg5gFQRvKWCZR/650JP6c6TuuB6mRlHT9rInTSrU5UhXp3JuoKmMsLVakyatTtS9Z3yDh5UrC8Odi3GTdtnVc8zHocwHBXwvRLYFmaBIHlRdAF6CwZO5dctfjIZIjNIzyirA33XXeGqNuzsp00FsB3BbQJSQPUr4Gikv9q3teqVO39WkSdPqbjirVy/Lb9RMHWLd+tdOKnIEEs7MAnDBAgi5WbZ9RbDn3yazkmnc5JYgRirHsxOAp7UfjOmWsOf3j+ULw84fHAVwLXii2tu0YAa80Y4xHNuipbJ4fBO+1N8Lhwp2zUnTRlsQMSgZwftP/iT/OZx6WluoRVNohsN5cnTAMGxhGWnlUasOaf9ub4wIv4wKbDaf21bDN6srfKG8ExPzL2mhYJ99u5wUS+A6y4btBHuZFQNicSDXi7O+fxwvjx75/m/fRNjRCdXWBnPj07hzXBPaNvRWglUJQhQhEyZC967Bead8ij/YQmk53IQ5NsSCr62YUKkaavDOxTMFwNjK4PmR3MPKd2PZp5HO1Tt5zwA8WhEkkkv1z1oRVEkwWwgfOPCcQetiY8/lKMe+0Xn7l6YrhFrT2T+XvWM2smLwCQEStoVX3TIu/t4xvGNLaVZbFrP8eV2wAJyyPy61bXxNacBzACugFEtF/PjkfXj2O5hDuLVtbVvbWIBW+O+zO2Tq+ffKtExGLMCvgvpuHZdECvnd+JQcessz8uDPfiev3fqsPPaz38mR7/bxbW1b27+i/T/vFJ8SVcoqiAAAAABJRU5ErkJggg==" alt="Bonsai">
+  </div>
+
+  <div class="panel">
+
+    <!-- ============ THE PANEL ============ -->
+    <div id="main">
+      <h1>Configuració</h1>
+      <p class="sub">
+        El dispositiu ja està configurat. Canvia el que necessitis i desa;
+        es reiniciarà per aplicar-ho.
+      </p>
+
+      <div class="errbox" id="load-err"></div>
+
+      <!-- ---- Wi-Fi ---- -->
+      <h2>Xarxes Wi&#8209;Fi</h2>
+      <div class="counter">
+        <span id="saved-count">0 de 5 desades</span>
+        <span id="saved-warn"></span>
+      </div>
+      <div class="saved" id="saved-list"></div>
+
+      <div class="counter">
+        <span id="scan-status">Encara no s'ha escanejat</span>
+      </div>
+      <div class="netlist" id="net-list"></div>
+      <button class="btn btn-secondary" id="btn-scan" style="width:100%">Escanejar xarxes</button>
+      <div class="inline-check">
+        <input type="checkbox" id="add-manual-toggle">
+        <label for="add-manual-toggle">Afegir una xarxa oculta</label>
+      </div>
+
+      <!-- ---- language ---- -->
+      <div class="group">
+        <h2>Idioma de la veu</h2>
+        <p class="hint" style="margin:-4px 0 12px">
+          Al canviar-lo, el dispositiu torna a descarregar els àudios de l'idioma.
+        </p>
+        <div class="opts" id="lang-opts">
+          <div class="opt" data-lang="ca-ES">
+            <div class="radio"></div>
+            <div class="opt-body">
+              <div class="opt-name">Català</div>
+              <div class="opt-meta">ca-ES · upc_ona</div>
+            </div>
+          </div>
+          <div class="opt" data-lang="es-ES">
+            <div class="radio"></div>
+            <div class="opt-body">
+              <div class="opt-name">Castellà</div>
+              <div class="opt-meta">es-ES · davefx</div>
+            </div>
+          </div>
+          <div class="opt" data-lang="en-US">
+            <div class="radio"></div>
+            <div class="opt-body">
+              <div class="opt-name">Anglès</div>
+              <div class="opt-meta">en-US · lessac</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---- backend ---- -->
+      <div class="group">
+        <h2>Servidor i clau de Groq</h2>
+        <div class="errbox" id="api-err"></div>
+        <div class="okbox" id="api-ok"></div>
+
+        <div class="field">
+          <label class="lbl" for="backend">Adreça del servidor</label>
+          <p class="hint">L'URL del teu backend, amb https si en té.</p>
+          <input type="url" id="backend" class="mono" placeholder="https://api.elmeuservidor.com"
+                 autocomplete="off" autocapitalize="off" spellcheck="false">
+        </div>
+
+        <div class="field">
+          <div class="lblrow">
+            <label class="lbl" for="token">Token del servidor</label>
+            <span class="tag tag-green hidden" id="token-tag">Desat</span>
+          </div>
+          <p class="hint" id="token-hint">S'envia com a capçalera X-API-Token.</p>
+          <input type="password" id="token" class="mono" autocomplete="off">
+          <div class="inline-check">
+            <input type="checkbox" id="show-token">
+            <label for="show-token">Mostrar el token</label>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="lblrow">
+            <label class="lbl" for="groq">Clau API de Groq</label>
+            <span class="tag tag-green hidden" id="groq-tag">Desada</span>
+          </div>
+          <p class="hint" id="groq-hint">Comença per gsk_. La generes a console.groq.com, dins d'API Keys.</p>
+          <input type="password" id="groq" class="mono" autocomplete="off">
+          <div class="inline-check">
+            <input type="checkbox" id="show-groq">
+            <label for="show-groq">Mostrar la clau</label>
+          </div>
+        </div>
+
+        <button class="btn btn-secondary" id="btn-test">Provar connexió</button>
+      </div>
+
+      <!-- ---- camera ---- -->
+      <div class="group">
+        <h2>Resolució de la càmera</h2>
+        <div class="field">
+          <p class="hint">
+            XGA és el valor per defecte: és la resolució més alta que el model
+            accepta sense reduir-la ell mateix. Més amunt es puja més dada per
+            res; més avall es perd detall.
+          </p>
+          <select id="frame">
+            <option value="qvga">QVGA · 320×240</option>
+            <option value="vga">VGA · 640×480</option>
+            <option value="svga">SVGA · 800×600</option>
+            <option value="xga">XGA · 1024×768</option>
+            <option value="sxga">SXGA · 1280×1024</option>
+            <option value="uxga">UXGA · 1600×1200</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="errbox" id="save-err" style="margin-top:26px;margin-bottom:0"></div>
+      <div class="actions">
+        <div class="spacer"></div>
+        <button class="btn btn-primary" id="btn-save">Desar i reiniciar</button>
+      </div>
+    </div>
+
+    <!-- ============ SAVED ============ -->
+    <div id="done" class="center hidden">
+      <div class="badge ok">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#346538" stroke-width="2.4"
+             stroke-linecap="round" stroke-linejoin="round" width="21" height="21">
+          <path d="M20 6 9 17l-5-5"/>
+        </svg>
+      </div>
+      <div class="t">Desat</div>
+      <div class="d">
+        El dispositiu s'està reiniciant. Ja pots tancar aquesta pàgina i tornar
+        a la teva xarxa.
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ PASSWORD SHEET ============ -->
+<div class="sheet-bg" id="sheet-bg">
+  <div class="sheet">
+    <h2 id="sheet-title">Contrasenya</h2>
+    <div class="who" id="sheet-who"></div>
+
+    <div class="field" id="sheet-ssid-field">
+      <label class="lbl" for="sheet-ssid">Nom de la xarxa</label>
+      <input type="text" id="sheet-ssid" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+
+    <div class="field">
+      <label class="lbl" for="sheet-pass">Contrasenya</label>
+      <p class="hint" id="sheet-hint"></p>
+      <input type="password" id="sheet-pass" autocomplete="off">
+      <div class="inline-check">
+        <input type="checkbox" id="sheet-show">
+        <label for="sheet-show">Mostrar la contrasenya</label>
+      </div>
+    </div>
+
+    <div class="row">
+      <button class="btn btn-secondary" id="sheet-cancel">Cancel·lar</button>
+      <button class="btn btn-primary" id="sheet-ok">Desar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+var MAX_NETS = 5;
+
+// Mirrors the firmware's rule: a saved network whose password is left empty
+// keeps whatever is stored. `kept` marks the ones that came from the device and
+// have not been retyped, so the POST can send "" and mean "unchanged".
+var nets = [];       // [{ssid, pass, kept}]
+var stored = { token:false, groq:false };
+var lang = "ca-ES";
+var editing = -1;    // index into nets, or -1 for a new network
+
+function $(id){ return document.getElementById(id); }
+
+function box(id, on, text){
+  var e = $(id);
+  if(text !== undefined) e.textContent = text;
+  e.className = e.className.replace(" show","") + (on ? " show" : "");
+}
+
+function signalClass(rssi){
+  if(rssi >= -55) return "s4";
+  if(rssi >= -65) return "s3";
+  if(rssi >= -75) return "s2";
+  return "s1";
+}
+
+/* ---------------------------------------------------------------- saved list */
+
+function renderSaved(){
+  var list = $("saved-list");
+  list.innerHTML = "";
+
+  nets.forEach(function(net, i){
+    var row = document.createElement("div");
+    row.className = "saved-item";
+
+    var idx = document.createElement("div");
+    idx.className = "idx";
+    idx.textContent = String(i + 1).padStart(2, "0");
+
+    var name = document.createElement("div");
+    name.className = "name";
+    name.textContent = net.ssid;
+
+    var tag = document.createElement("span");
+    tag.className = "tag " + (net.kept ? "tag-green" : "tag-blue");
+    tag.textContent = net.kept ? "Desada" : "Nova";
+
+    var edit = document.createElement("button");
+    edit.className = "edit";
+    edit.type = "button";
+    edit.textContent = "Canviar";
+    edit.onclick = function(){ openSheet(i); };
+
+    var rm = document.createElement("button");
+    rm.className = "rm";
+    rm.type = "button";
+    rm.innerHTML = "&times;";
+    rm.title = "Treure";
+    rm.onclick = function(){ nets.splice(i, 1); renderSaved(); };
+
+    row.appendChild(idx);
+    row.appendChild(name);
+    row.appendChild(tag);
+    row.appendChild(edit);
+    row.appendChild(rm);
+    list.appendChild(row);
+  });
+
+  $("saved-count").textContent = nets.length + " de " + MAX_NETS + " desades";
+  $("saved-warn").textContent = nets.length ? "" : "Cal com a mínim una xarxa";
+  $("btn-save").disabled = nets.length === 0;
+}
+
+/* --------------------------------------------------------------------- sheet */
+
+function openSheet(index){
+  editing = index;
+  var net = index >= 0 ? nets[index] : null;
+  var manual = index < 0 && $("add-manual-toggle").checked;
+
+  $("sheet-title").textContent = net ? "Canviar la contrasenya" : "Afegir una xarxa";
+  $("sheet-who").textContent = net ? net.ssid : (window.pendingSsid || "");
+  $("sheet-who").style.display = (net || window.pendingSsid) ? "" : "none";
+
+  // The SSID is only editable for a hidden network typed by hand; picking one
+  // from the scan or editing a saved one already knows it.
+  var showSsid = !net && !window.pendingSsid;
+  $("sheet-ssid-field").className = showSsid ? "field" : "field hidden";
+  $("sheet-ssid").value = "";
+
+  $("sheet-hint").textContent = net && net.kept
+    ? "Deixa-ho buit per conservar la contrasenya actual."
+    : "Deixa-ho buit si la xarxa és oberta.";
+
+  $("sheet-pass").value = "";
+  $("sheet-pass").type = "password";
+  $("sheet-show").checked = false;
+  $("sheet-bg").className = "sheet-bg open";
+  setTimeout(function(){ (showSsid ? $("sheet-ssid") : $("sheet-pass")).focus(); }, 60);
+}
+
+function closeSheet(){
+  $("sheet-bg").className = "sheet-bg";
+  window.pendingSsid = null;
+  editing = -1;
+}
+
+$("sheet-cancel").onclick = closeSheet;
+$("sheet-bg").onclick = function(e){ if(e.target === this) closeSheet(); };
+$("sheet-show").onchange = function(){
+  $("sheet-pass").type = this.checked ? "text" : "password";
+};
+
+$("sheet-ok").onclick = function(){
+  var pass = $("sheet-pass").value;
+
+  if(editing >= 0){
+    // Empty means unchanged, so `kept` survives; anything typed replaces it.
+    if(pass.length){ nets[editing].pass = pass; nets[editing].kept = false; }
+    closeSheet();
+    renderSaved();
+    return;
+  }
+
+  var ssid = window.pendingSsid || $("sheet-ssid").value.trim();
+  if(!ssid){ $("sheet-ssid").focus(); return; }
+  if(nets.length >= MAX_NETS){ closeSheet(); return; }
+
+  var at = -1;
+  nets.forEach(function(n, i){ if(n.ssid === ssid) at = i; });
+  if(at >= 0){ nets[at] = { ssid:ssid, pass:pass, kept:false }; }
+  else { nets.push({ ssid:ssid, pass:pass, kept:false }); }
+
+  closeSheet();
+  renderSaved();
+  renderScanned(window.lastScan || []);
+};
+
+$("add-manual-toggle").onchange = function(){
+  if(this.checked){
+    window.pendingSsid = null;
+    openSheet(-1);
+    this.checked = false;
+  }
+};
+
+/* ---------------------------------------------------------------------- scan */
+
+function renderScanned(list){
+  window.lastScan = list;
+  var box = $("net-list");
+  box.innerHTML = "";
+
+  var saved = nets.map(function(n){ return n.ssid; });
+  var shown = list.filter(function(n){ return saved.indexOf(n.ssid) === -1; });
+
+  if(!list.length){ $("scan-status").textContent = "Encara no s'ha escanejat"; return; }
+  if(!shown.length){ $("scan-status").textContent = "Cap xarxa nova detectada"; return; }
+  $("scan-status").textContent = shown.length + " xarxes detectades";
+
+  shown.forEach(function(net){
+    var row = document.createElement("div");
+    row.className = "netrow";
+    row.innerHTML =
+      '<div class="signal ' + signalClass(net.rssi) + '"><i></i><i></i><i></i><i></i></div>' +
+      '<div class="name"></div>' +
+      '<div class="lock">' + (net.secure ? "Protegida" : "Oberta") + '</div>';
+    row.querySelector(".name").textContent = net.ssid;
+    row.onclick = function(){
+      if(nets.length >= MAX_NETS) return;
+      if(!net.secure){
+        nets.push({ ssid:net.ssid, pass:"", kept:false });
+        renderSaved();
+        renderScanned(window.lastScan);
+        return;
+      }
+      window.pendingSsid = net.ssid;
+      openSheet(-1);
+    };
+    box.appendChild(row);
+  });
+}
+
+$("btn-scan").onclick = function(){
+  var btn = this;
+  btn.disabled = true;
+  $("scan-status").textContent = "Escanejant…";
+
+  fetch("/api/scan").then(function(r){ return r.json(); }).then(function(list){
+    btn.disabled = false;
+    list.sort(function(a, b){ return b.rssi - a.rssi; });
+    renderScanned(list);
+  }).catch(function(){
+    btn.disabled = false;
+    $("scan-status").textContent = "No s'ha pogut escanejar";
+  });
+};
+
+/* ------------------------------------------------------------------ language */
+
+Array.prototype.forEach.call(document.querySelectorAll("#lang-opts .opt"), function(opt){
+  opt.onclick = function(){
+    lang = opt.dataset.lang;
+    Array.prototype.forEach.call(document.querySelectorAll("#lang-opts .opt"), function(o){
+      o.className = o === opt ? "opt sel" : "opt";
+    });
+  };
+});
+
+/* ------------------------------------------------------------- reveal toggles */
+
+$("show-token").onchange = function(){ $("token").type = this.checked ? "text" : "password"; };
+$("show-groq").onchange  = function(){ $("groq").type  = this.checked ? "text" : "password"; };
+
+/* ------------------------------------------------------------------- payload */
+
+function payload(){
+  var body = {
+    lang: lang,
+    backend_url: $("backend").value.trim().replace(/\/+$/, ""),
+    frame_size: $("frame").value
+  };
+
+  // Omitted, not empty: the firmware only writes the keys it is given, so
+  // leaving a stored secret untouched keeps it. Sending "" would clear it.
+  var token = $("token").value;
+  if(token || !stored.token) body.api_token = token;
+  var groq = $("groq").value;
+  if(groq || !stored.groq) body.groq_api_key = groq;
+
+  var wifi = { count: nets.length };
+  nets.forEach(function(n, i){
+    wifi["ssid" + i] = n.ssid;
+    wifi["pass" + i] = n.pass;   // "" on a kept network: the firmware reuses it
+  });
+  body.wifi = wifi;
+
+  return body;
+}
+
+/* ---------------------------------------------------------------------- test */
+
+$("btn-test").onclick = function(){
+  var btn = this;
+  var url = $("backend").value.trim();
+  box("api-ok", false);
+  if(!url){ box("api-err", true, "Falta l'adreça del servidor."); return; }
+
+  btn.disabled = true;
+  box("api-err", false);
+  box("api-ok", true, "Provant…");
+
+  fetch("/api/test", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({
+      backend_url: url.replace(/\/+$/, ""),
+      api_token: $("token").value
+    })
+  }).then(function(r){
+    return r.json().then(function(j){ return { status:r.status, body:j }; });
+  }).then(function(res){
+    btn.disabled = false;
+    box("api-ok", false);
+    if(res.body.ok){ box("api-ok", true, "El servidor respon correctament."); return; }
+    var why = {
+      no_url:  "Falta l'adreça del servidor.",
+      ap_mode: "El dispositiu no està connectat a cap xarxa, així que no pot sortir a internet. Desa primer el Wi-Fi.",
+      bad_url: "L'adreça no és vàlida.",
+      http:    "El servidor ha respost " + res.body.status + "."
+    };
+    box("api-err", true, why[res.body.reason] || "No s'ha pogut connectar.");
+  }).catch(function(){
+    btn.disabled = false;
+    box("api-ok", false);
+    box("api-err", true, "No s'ha pogut connectar.");
+  });
+};
+
+/* ---------------------------------------------------------------------- save */
+
+$("btn-save").onclick = function(){
+  var btn = this;
+  if(!nets.length){ box("save-err", true, "Cal com a mínim una xarxa."); return; }
+
+  btn.disabled = true;
+  box("save-err", false);
+
+  fetch("/api/config", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify(payload())
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if(!j.ok) throw new Error("rejected");
+    // The board reboots about a second from now and this page goes with the
+    // access point, so there is nothing to navigate to.
+    $("main").className = "hidden";
+    $("done").className = "center";
+  }).catch(function(){
+    btn.disabled = false;
+    box("save-err", true, "No s'ha pogut desar.");
+  });
+};
+
+/* ---------------------------------------------------------------------- load */
+
+function selectLang(code){
+  lang = code || "ca-ES";
+  Array.prototype.forEach.call(document.querySelectorAll("#lang-opts .opt"), function(o){
+    o.className = o.dataset.lang === lang ? "opt sel" : "opt";
+  });
+}
+
+fetch("/api/config").then(function(r){ return r.json(); }).then(function(c){
+  selectLang(c.lang);
+  $("backend").value = c.backend_url || "";
+  if(c.frame_size) $("frame").value = c.frame_size;
+
+  stored.token = !!c.has_api_token;
+  stored.groq  = !!c.has_groq_api_key;
+
+  if(stored.token){
+    $("token-tag").className = "tag tag-green";
+    $("token").placeholder = "••••••••••••";
+    $("token-hint").textContent =
+      "S'envia com a capçalera X-API-Token. Deixa-ho buit per conservar el token actual.";
+  }
+  if(stored.groq){
+    $("groq-tag").className = "tag tag-green";
+    $("groq").placeholder = "gsk_••••••••••••••••";
+    $("groq-hint").textContent =
+      "Comença per gsk_. Deixa-ho buit per conservar la clau actual.";
+  }
+
+  nets = (c.networks || []).map(function(n){
+    return { ssid:n.ssid, pass:"", kept:!!n.has_password };
+  });
+  renderSaved();
+}).catch(function(){
+  box("load-err", true, "No s'ha pogut llegir la configuració actual del dispositiu.");
+  selectLang("ca-ES");
+  renderSaved();
+});
+</script>
+</body>
+</html>
