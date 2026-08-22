@@ -60,6 +60,13 @@ SetupPortal portal;
 
 namespace {
 
+// Raised when the board has no network: either WiFiManager gave up on its
+// retries, or something asked for the network and found nothing there. Only ever
+// a flag. It is set from inside a request — possibly with the audio sink
+// mid-stream and the card lock held — so the clip and the portal are run from
+// loop(), and from one place, which is what stops the clip playing twice.
+volatile bool offlineRequested = false;
+
 constexpr const char* kConfigFile        = "/config.json";
 constexpr const char* kLookFile          = "/look.wav";
 constexpr const char* kDefaultLang       = "ca-ES";
@@ -277,8 +284,12 @@ void savePhotoInBackground(const uint8_t* jpeg, size_t len) {
 // downloads, and playWav() wants a file anyway.
 void look() {
     if (!wifi.isConnected()) {
+        // No clip and no portal from here: this runs inside loop()'s call, and
+        // doing both from the same place the request came from is what played
+        // the clip twice. Raise the flag and let loop() handle it once, the same
+        // way it handles the retries running out.
         Serial.println("look: no WiFi.");
-        audio.playDefault(DefaultAudios::NO_WIFI);
+        offlineRequested = true;
         return;
     }
     if (String(configDoc["backend_url"] | "").length() == 0) {
@@ -421,12 +432,6 @@ void setLang(const String& nou) {
 }  // namespace bonsai
 
 
-// Set by WiFiManager when it has given up, or when something asked for the
-// network while it was down. Only a flag: that callback can arrive from inside a
-// request, with the audio sink mid-stream and the card lock held, so the clip and
-// the portal happen from loop() where nothing else owns GPIO8.
-volatile bool offlineRequested = false;
-
 void onWiFiOffline(const char* why) {
     offlineRequested = true;
 }
@@ -438,8 +443,13 @@ void onWiFiStatus(WiFiStatus status, const String& detail) {
             Serial.printf("WiFi connected - http://%s\n", detail.c_str());
             break;
         case WiFiStatus::Disconnected:
+            // Silent on purpose. This fires when the sweep begin() runs at boot
+            // comes back empty, which is not yet news: the retries in loop() are
+            // about to have a go. The clip belongs to the two moments that mean
+            // something — the retries running out, and someone pressing the
+            // button and finding nothing there — and both go through
+            // offlineRequested so it is said once, from one place.
             Serial.println("Wifi Disconnected");
-            audio.playDefault(DefaultAudios::NO_WIFI);
         break;
         case WiFiStatus::Reconnecting:
             Serial.println("Wifi Reconnecting");

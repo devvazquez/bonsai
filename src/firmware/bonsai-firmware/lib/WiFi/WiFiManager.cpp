@@ -160,10 +160,10 @@ bool WiFiManager::_trySTA(const char* ssid, const char* password) {
 // How long to wait between finishing one failed sweep and starting the next.
 static constexpr uint32_t kSweepGapMs = 10000;
 
-// After disconnect(), before the next begin(). Without it the driver is still in
-// "sta is connecting" and the next begin() is refused outright with
-// ESP_ERR_WIFI_CONN — which is how a board with a wrong password ended up
-// printing that error for ever instead of working through its networks.
+// Breathing room between one attempt and the next. It is only pacing: the thing
+// that actually makes begin() acceptable is the mode cycle in _beginAttempt(),
+// not this delay. An earlier version leaned on this value for that and it did
+// not work — see the note there.
 static constexpr uint32_t kSettleMs = 400;
 
 bool WiFiManager::_loadSweep() {
@@ -175,6 +175,23 @@ bool WiFiManager::_loadSweep() {
 }
 
 void WiFiManager::_beginAttempt() {
+    // The mode is cycled before every attempt, and a plain disconnect() is not
+    // enough to replace it.
+    //
+    // WiFi.begin() starts with esp_wifi_set_config(), which IDF refuses with
+    // ESP_ERR_WIFI_STATE while the station is still working through a previous
+    // connect — "sta is connecting, cannot set config". There is nothing to wait
+    // for either: STAClass only ever reports WL_DISCONNECTED, WL_IDLE_STATUS,
+    // WL_CONNECTED and WL_STOPPED, with no value meaning "connecting", so
+    // status() reads exactly the same before an attempt and during one. A fixed
+    // settling delay was a guess, and 400 ms was the wrong guess: sweeps two and
+    // three failed instantly instead of retrying.
+    //
+    // Turning the mode off and back on leaves the driver in a state begin() will
+    // accept, without having to infer anything. It costs about 100 ms of
+    // blocking inside WiFi.mode(), which is two orders off the five seconds this
+    // whole exercise is about removing from the loop.
+    WiFi.mode(WIFI_OFF);
     WiFi.mode(WIFI_STA);
     WiFi.begin(_sweepSsids[_netIndex].c_str(), _sweepPasses[_netIndex].c_str());
     _phase        = Phase::Connecting;
@@ -215,8 +232,8 @@ void WiFiManager::loop() {
             }
             if (millis() - _phaseStartMs < _timeoutPerNetwork) return;
 
-            // This one is not going to answer. Drop it and line up the next.
-            WiFi.disconnect(false);
+            // This one is not going to answer. Line up the next; _beginAttempt()
+            // cycles the mode, so there is nothing to tear down here.
             ++_netIndex;
             _phase        = Phase::Settling;
             _phaseStartMs = millis();
@@ -242,10 +259,8 @@ void WiFiManager::loop() {
             _notify(WiFiStatus::Reconnecting);
             if (!_loadSweep()) return;
 
-            // Straight into Settling: whatever the last attempt left behind has
-            // to clear before begin() will be accepted.
-            WiFi.mode(WIFI_STA);
-            WiFi.disconnect(false);
+            // Via Settling rather than straight into the attempt, so a sweep is
+            // never started in the same iteration that noticed it was needed.
             _phase        = Phase::Settling;
             _phaseStartMs = millis();
             return;
