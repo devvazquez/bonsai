@@ -7,6 +7,7 @@
 #include <ArduinoJson.h>
 #include <Lang.h>
 #include <SetupPortal.h>
+#include <esp_timer.h>
 
 // The Arduino loop task gets 8 KB by default, and that is not enough for what
 // runs nested inside look(): HTTPClient, mbedTLS and the audio sink all stack
@@ -436,10 +437,61 @@ void onWiFiStatus(WiFiStatus status, const String& detail) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Button edge capture.
+//
+// loop() cannot be trusted to sample the pin. wifi.loop() blocks for up to
+// _timeoutPerNetwork (5 s) per configured network inside _trySTA()'s connect
+// wait, so a board that cannot reach its network freezes the loop for half of
+// every 10 s window — and a 150 ms tap landing in that half was never seen at
+// all, which is exactly how the button came to look dead while the loop logic
+// was fine.
+//
+// The interrupt records edges whatever the loop is doing; loop() drains the ring
+// when it next runs. Late is survivable, lost is not.
+// ---------------------------------------------------------------------------
+
+struct BtnEdge {
+    uint32_t ms;
+    bool     down;
+};
+
+// 8 is plenty: a double press is four edges, and anything faster than that is
+// contact bounce the debounce below discards anyway.
+volatile BtnEdge btnRing[8];
+volatile uint8_t btnHead = 0;   // written by the ISR
+volatile uint8_t btnTail = 0;   // written by loop()
+volatile uint32_t btnDropped = 0;
+
+void IRAM_ATTR onButtonEdge() {
+    // esp_timer_get_time() and not millis(): millis() is not safe to call from
+    // an ISR on this core.
+    const uint32_t now  = (uint32_t)(esp_timer_get_time() / 1000);
+    const uint8_t  next = (uint8_t)((btnHead + 1) % 8);
+
+    if (next == btnTail) {          // ring full: loop() has been away too long
+        ++btnDropped;
+        return;
+    }
+    btnRing[btnHead].ms   = now;
+    btnRing[btnHead].down = digitalRead(BUTTON_PIN) == LOW;
+    btnHead               = next;
+}
+
+bool btnPop(BtnEdge& out) {
+    if (btnTail == btnHead) return false;
+    // Field by field: the implicit copy assignment takes a const&, which a
+    // volatile source cannot bind to.
+    out.ms   = btnRing[btnTail].ms;
+    out.down = btnRing[btnTail].down;
+    btnTail  = (uint8_t)((btnTail + 1) % 8);
+    return true;
+}
+
 void setup() {
     //Set the pullup config fo the button pin.
     pinMode(BUTTON_PIN, INPUT_PULLUP);
-    
+
     Serial.begin(115200);
 
     // The card holds /config.json and the default clips, so a failed mount is
@@ -521,6 +573,13 @@ void setup() {
     //Download default audios if they are missing.
     audio.downloadDefaultAudiosIfMissing(wifi);
 
+    // A pulled-up pin with the switch idle must read HIGH. A LOW here means the
+    // line is held to ground — a bodge wire touching something, or a stuck
+    // switch — and no amount of loop() logic makes a press detectable.
+    attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), onButtonEdge, CHANGE);
+    Serial.printf("Button on GPIO%d: resting level %s (expected HIGH)\n",
+                  BUTTON_PIN, digitalRead(BUTTON_PIN) ? "HIGH" : "LOW");
+
     if(isFirstBoot) {
         audio.playDefault(DefaultAudios::FIRST_BOOT);
     }
@@ -535,7 +594,7 @@ void loop() {
     // duration of the press itself — some 80 ms on top of the 250 ms the
     // double-press window already cost — and buys the AP an entry point on a
     // board with no screen and no console.
-    static bool     lastState     = HIGH;
+    static bool     held          = false;
     static uint32_t lastChange    = 0;
     static uint32_t pressStart    = 0;   // falling edge of the press being held
     static uint32_t lastRelease   = 0;   // rising edge, opens the double window
@@ -550,17 +609,23 @@ void loop() {
     const uint32_t LONG_PRESS_MS   = 2000;
 
     uint32_t now = millis();
-    bool currentState = digitalRead(BUTTON_PIN);
 
-    if (currentState != lastState && now - lastChange > DEBOUNCE_MS) {
-        lastChange = now;
-        lastState  = currentState;
-        if (currentState == LOW) {          // falling edge = press
-            pressStart = now;
+    // Drain every edge the ISR recorded, including ones from while the loop was
+    // blocked. Timestamps come from the edge, not from now, so a press that is
+    // only read about seconds later is still measured correctly.
+    BtnEdge e;
+    while (btnPop(e)) {
+        if (e.down == held) continue;                  // no transition
+        if (e.ms - lastChange <= DEBOUNCE_MS) continue; // contact bounce
+        lastChange = e.ms;
+        held       = e.down;
+
+        if (held) {
+            pressStart = e.ms;
             longFired  = false;
             Serial.printf("BUTTON pressed on GPIO%d\n", BUTTON_PIN);
-        } else {                            // rising edge = release
-            lastRelease = now;
+        } else {
+            lastRelease = e.ms;
             // A press already consumed by the long-press branch is not a tap.
             if (!longFired) {
                 pressCount++;
@@ -569,10 +634,16 @@ void loop() {
         }
     }
 
+    if (btnDropped) {
+        Serial.printf("BUTTON dropped %u edge(s): the loop was away too long\n",
+                      (unsigned)btnDropped);
+        btnDropped = 0;
+    }
+
     // Fires while the button is still down, so holding it does something
     // observable instead of the user having to guess how long is long enough.
     // Never returns: the portal ends in a reboot.
-    if (lastState == LOW && !longFired && now - pressStart >= LONG_PRESS_MS) {
+    if (held && !longFired && now - pressStart >= LONG_PRESS_MS) {
         longFired     = true;
         waitingDouble = false;
         pressCount    = 0;
