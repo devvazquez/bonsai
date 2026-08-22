@@ -28,8 +28,8 @@
 //     GET  /              the page for the current mode
 //     GET  /api/scan      [{ssid, rssi, secure}, ...]
 //     GET  /api/config    the current config, secrets replaced by a flag
-//     POST /api/test      {backend_url, api_token, groq_api_key}
-//     POST /api/config    {lang, backend_url, api_token, groq_api_key, wifi{}}
+//     POST /api/test      {backend_url, api_token}
+//     POST /api/config    {lang, backend_url, api_token, frame_size, wifi{}}
 class SetupPortal {
 public:
     using SaveCallback = std::function<void()>;

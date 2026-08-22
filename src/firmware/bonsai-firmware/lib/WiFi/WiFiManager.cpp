@@ -97,8 +97,47 @@ void WiFiManager::removeNetwork(const String& ssid) {
     if (_onChanged) _onChanged();
 }
 
+// Why the station gave up, in words.
+//
+// Without this a failed association is indistinguishable from a network out of
+// range: both are a five second silence followed by "Wifi Reconnecting". The
+// reason code is the difference between "the password is wrong" and "that AP is
+// not there", and those have nothing to do with each other.
+static const char* staDisconnectReason(uint8_t reason) {
+    switch (reason) {
+        case WIFI_REASON_AUTH_FAIL:
+        case WIFI_REASON_HANDSHAKE_TIMEOUT:
+        case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+        case WIFI_REASON_MIC_FAILURE:
+            return "wrong password";
+        case WIFI_REASON_NO_AP_FOUND:
+            return "no such network in range (2.4 GHz only)";
+        case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+            return "found, but the security does not match";
+        case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
+            return "found, but below the auth mode threshold";
+        case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
+            return "found, but too weak";
+        case WIFI_REASON_ASSOC_EXPIRE:
+        case WIFI_REASON_ASSOC_TOOMANY:
+            return "the AP turned us away";
+        case WIFI_REASON_BEACON_TIMEOUT:
+            return "lost the AP";
+        default:
+            return "see the reason code";
+    }
+}
+
 void WiFiManager::begin(uint32_t timeoutPerNetworkMs) {
     _timeoutPerNetwork = timeoutPerNetworkMs;
+
+    // Registered once, for the life of the board: every failed association from
+    // here on says what went wrong instead of just timing out quietly.
+    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
+        const uint8_t reason = info.wifi_sta_disconnected.reason;
+        Serial.printf("WiFi: disconnected, reason %u - %s\n",
+                      reason, staDisconnectReason(reason));
+    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 
     if (!_tryAllNetworks()) {
         _notify(WiFiStatus::Disconnected);
@@ -140,6 +179,13 @@ bool WiFiManager::_trySTA(const char* ssid, const char* password) {
     // `true` argument powers the radio down, so the retry from loop() came back
     // to a stack that was off and failed the same way again — a board with
     // perfectly good credentials sat printing "Wifi Reconnecting" for ever.
+
+    // The length, never the password itself: this output gets pasted into chat
+    // windows. A 0 here is the whole answer on its own — whatever the user typed
+    // never reached the card.
+    Serial.printf("WiFi: trying \"%s\" (password %u chars)\n",
+                  ssid, (unsigned)strlen(password));
+
     WiFi.mode(WIFI_STA);
     WiFi.disconnect(false);
     WiFi.begin(ssid, password);
@@ -191,6 +237,10 @@ void WiFiManager::_beginAttempt() {
     // accept, without having to infer anything. It costs about 100 ms of
     // blocking inside WiFi.mode(), which is two orders off the five seconds this
     // whole exercise is about removing from the loop.
+    Serial.printf("WiFi: trying \"%s\" (password %u chars)\n",
+                  _sweepSsids[_netIndex].c_str(),
+                  (unsigned)_sweepPasses[_netIndex].length());
+
     WiFi.mode(WIFI_OFF);
     WiFi.mode(WIFI_STA);
     WiFi.begin(_sweepSsids[_netIndex].c_str(), _sweepPasses[_netIndex].c_str());

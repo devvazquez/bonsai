@@ -381,7 +381,7 @@
 
       <!-- ---- backend ---- -->
       <div class="group">
-        <h2>Servidor i clau de Groq</h2>
+        <h2>Servidor</h2>
         <div class="errbox" id="api-err"></div>
         <div class="okbox" id="api-ok"></div>
 
@@ -405,18 +405,6 @@
           </div>
         </div>
 
-        <div class="field">
-          <div class="lblrow">
-            <label class="lbl" for="groq">Clau API de Groq</label>
-            <span class="tag tag-green hidden" id="groq-tag">Desada</span>
-          </div>
-          <p class="hint" id="groq-hint">Comença per gsk_. La generes a console.groq.com, dins d'API Keys.</p>
-          <input type="password" id="groq" class="mono" autocomplete="off">
-          <div class="inline-check">
-            <input type="checkbox" id="show-groq">
-            <label for="show-groq">Mostrar la clau</label>
-          </div>
-        </div>
 
         <button class="btn btn-secondary" id="btn-test">Provar connexió</button>
       </div>
@@ -503,7 +491,7 @@ var MAX_NETS = 5;
 // keeps whatever is stored. `kept` marks the ones that came from the device and
 // have not been retyped, so the POST can send "" and mean "unchanged".
 var nets = [];       // [{ssid, pass, kept}]
-var stored = { token:false, groq:false };
+var stored = { token:false };
 var lang = "ca-ES";
 var editing = -1;    // index into nets, or -1 for a new network
 
@@ -709,7 +697,6 @@ Array.prototype.forEach.call(document.querySelectorAll("#lang-opts .opt"), funct
 /* ------------------------------------------------------------- reveal toggles */
 
 $("show-token").onchange = function(){ $("token").type = this.checked ? "text" : "password"; };
-$("show-groq").onchange  = function(){ $("groq").type  = this.checked ? "text" : "password"; };
 
 /* ------------------------------------------------------------------- payload */
 
@@ -724,8 +711,6 @@ function payload(){
   // leaving a stored secret untouched keeps it. Sending "" would clear it.
   var token = $("token").value;
   if(token || !stored.token) body.api_token = token;
-  var groq = $("groq").value;
-  if(groq || !stored.groq) body.groq_api_key = groq;
 
   var wifi = { count: nets.length };
   nets.forEach(function(n, i){
@@ -816,19 +801,12 @@ fetch("/api/config").then(function(r){ return r.json(); }).then(function(c){
   if(c.frame_size) $("frame").value = c.frame_size;
 
   stored.token = !!c.has_api_token;
-  stored.groq  = !!c.has_groq_api_key;
 
   if(stored.token){
     $("token-tag").className = "tag tag-green";
     $("token").placeholder = "••••••••••••";
     $("token-hint").textContent =
       "S'envia com a capçalera X-API-Token. Deixa-ho buit per conservar el token actual.";
-  }
-  if(stored.groq){
-    $("groq-tag").className = "tag tag-green";
-    $("groq").placeholder = "gsk_••••••••••••••••";
-    $("groq-hint").textContent =
-      "Comença per gsk_. Deixa-ho buit per conservar la clau actual.";
   }
 
   nets = (c.networks || []).map(function(n){

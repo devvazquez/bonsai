@@ -17,7 +17,7 @@ constexpr const char* kApPassword = nullptr;
 constexpr uint8_t     kApChannel  = 1;
 constexpr int         kApMaxConn  = 2;
 
-// Enough for the largest POST: 5 networks plus the URL and two tokens.
+// Enough for the largest POST: 5 networks plus the URL and the token.
 constexpr size_t kRequestDocSize = 4096;
 
 // A crowded flat sees plenty of networks but the list is only there to be
@@ -140,10 +140,8 @@ void SetupPortal::_handleConfigGet() {
         doc["backend_url"] = (*_config)["backend_url"] | "";
         doc["frame_size"]  = (*_config)["frame_size"]  | "svga";
 
-        const char* token = (*_config)["api_token"]    | "";
-        const char* groq  = (*_config)["groq_api_key"] | "";
-        doc["has_api_token"]    = token[0] != '\0';
-        doc["has_groq_api_key"] = groq[0]  != '\0';
+        const char* token = (*_config)["api_token"] | "";
+        doc["has_api_token"] = token[0] != '\0';
 
         String   ssids[WIFI_MAX_NETWORKS];
         String   passes[WIFI_MAX_NETWORKS];
@@ -276,8 +274,6 @@ void SetupPortal::_handleConfig() {
         (*_config)["backend_url"] = req["backend_url"] | "";
     if (req.containsKey("api_token"))
         (*_config)["api_token"] = req["api_token"] | "";
-    if (req.containsKey("groq_api_key"))
-        (*_config)["groq_api_key"] = req["groq_api_key"] | "";
     if (req.containsKey("frame_size"))
         (*_config)["frame_size"] = req["frame_size"] | "svga";
 
@@ -319,6 +315,15 @@ void SetupPortal::_handleConfig() {
     Serial.printf("Setup saved: lang=%s, %u network(s), backend=%s\n",
                   ((*_config)["lang"] | "?"), count,
                   ((*_config)["backend_url"] | "(none)"));
+
+    // What actually went to the card, per network. A password of 0 characters on
+    // a network the user just typed one into means it was lost between the page
+    // and here — otherwise invisible until the next boot fails to connect for
+    // what looks like no reason at all.
+    for (uint32_t i = 0; i < count; ++i) {
+        Serial.printf("  network %u: \"%s\" (password %u chars)\n",
+                      i, ssids[i].c_str(), passes[i].length());
+    }
 
     _server.send(200, "application/json", "{\"ok\":true}");
 

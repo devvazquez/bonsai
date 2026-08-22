@@ -394,7 +394,7 @@
         <li data-rail="0"><span class="num"><span>01</span></span> Benvinguda</li>
         <li data-rail="1"><span class="num"><span>02</span></span> Idioma de la veu</li>
         <li data-rail="2"><span class="num"><span>03</span></span> Xarxes Wi‑Fi</li>
-        <li data-rail="3"><span class="num"><span>04</span></span> Servidor i Groq</li>
+        <li data-rail="3"><span class="num"><span>04</span></span> Servidor</li>
         <li data-rail="4"><span class="num"><span>05</span></span> Revisió</li>
       </ol>
     </nav>
@@ -510,11 +510,11 @@
         </div>
       </section>
 
-      <!-- ============ 3 · BACKEND + GROQ ============ -->
+      <!-- ============ 3 · BACKEND ============ -->
       <section class="step" data-step="3">
         <div class="eyebrow">Pas 4 de 5</div>
-        <h1>Servidor i clau de Groq</h1>
-        <p class="sub">El dispositiu envia les fotos al teu servidor, que les analitza amb Groq i retorna la veu. Sense aquestes dades no podrà descriure res.</p>
+        <h1>Servidor</h1>
+        <p class="sub">El dispositiu envia les fotos al teu servidor, que les analitza i retorna la veu. Sense aquesta adreça no podrà descriure res.</p>
 
         <div class="errbox" id="api-err"></div>
 
@@ -534,15 +534,6 @@
           </div>
         </div>
 
-        <div class="field">
-          <label class="lbl" for="groq">Clau API de Groq</label>
-          <p class="hint">Comença per gsk_. La generes a console.groq.com, dins d'API Keys.</p>
-          <input type="password" id="groq" class="mono" placeholder="gsk_••••••••••••••••" autocomplete="off">
-          <div class="inline-check">
-            <input type="checkbox" id="show-groq">
-            <label for="show-groq">Mostrar la clau</label>
-          </div>
-        </div>
 
         <div class="actions">
           <button class="btn btn-quiet" data-go="2">Enrere</button>
@@ -625,13 +616,12 @@
   "use strict";
 
   var MAX_NETWORKS = 5;              // WIFI_MAX_NETWORKS al firmware
-  var STEP_NAMES = ["Benvinguda","Idioma","Xarxes Wi-Fi","Servidor i Groq","Revisió"];
+  var STEP_NAMES = ["Benvinguda","Idioma","Xarxes Wi-Fi","Servidor","Revisió"];
 
   var cfg = {
     lang: "ca-ES",
     backend_url: "",
     api_token: "",
-    groq_api_key: "",
     networks: []                      // [{ssid, pass, secure}]
   };
 
@@ -813,9 +803,6 @@
   $("show-token").addEventListener("change", function(e){
     $("token").type = e.target.checked ? "text" : "password";
   });
-  $("show-groq").addEventListener("change", function(e){
-    $("groq").type = e.target.checked ? "text" : "password";
-  });
 
   function showApiErr(msg){
     var box = $("api-err");
@@ -826,7 +813,6 @@
 
   function validateApi(){
     var url = $("backend").value.trim();
-    var groq = $("groq").value.trim();
 
     if(!url){
       showApiErr("Falta l'adreça del servidor.");
@@ -838,21 +824,10 @@
       $("backend").focus();
       return false;
     }
-    if(!groq){
-      showApiErr("Falta la clau API de Groq.");
-      $("groq").focus();
-      return false;
-    }
-    if(groq.indexOf("gsk_") !== 0){
-      showApiErr("La clau de Groq hauria de començar per gsk_");
-      $("groq").focus();
-      return false;
-    }
 
     showApiErr("");
     cfg.backend_url = url.replace(/\/+$/, "");
     cfg.api_token = $("token").value.trim();
-    cfg.groq_api_key = groq;
     return true;
   }
 
@@ -867,8 +842,7 @@
       headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({
         backend_url: cfg.backend_url,
-        api_token: cfg.api_token,
-        groq_api_key: cfg.groq_api_key
+        api_token: cfg.api_token
       })
     })
       .then(function(r){
@@ -931,7 +905,6 @@
 
     row("Servidor", '<span class="mono">' + escapeHtml(cfg.backend_url || "—") + '</span>', 3);
     row("Token", cfg.api_token ? '<span class="mono">' + mask(cfg.api_token) + '</span>' : '<span class="mono">sense token</span>', 3);
-    row("Groq", '<span class="mono">' + mask(cfg.groq_api_key) + '</span>', 3);
   }
 
   function mask(v){
@@ -957,7 +930,6 @@
       lang: cfg.lang,
       backend_url: cfg.backend_url,
       api_token: cfg.api_token,
-      groq_api_key: cfg.groq_api_key,
       wifi: wifi
     };
   }

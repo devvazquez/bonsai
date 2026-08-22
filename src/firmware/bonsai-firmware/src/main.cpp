@@ -72,7 +72,7 @@ constexpr const char* kLookFile          = "/look.wav";
 constexpr const char* kDefaultLang       = "ca-ES";
 constexpr const char* kDefaultBackendUrl = "";
 
-// 8 KB and not 4: the setup portal adds the two tokens and up to five
+// 8 KB and not 4: the setup portal adds the token and up to five
 // ssid/password pairs on top of everything else that lives in here.
 DynamicJsonDocument configDoc(8192);
 bool                isFirstBoot = false;
@@ -535,6 +535,16 @@ void setup() {
     loadConfig();
     if (isFirstBoot) {
         Serial.println("Detected first boot, writing config defaults.");
+        saveConfig();
+    }
+
+    // The Groq key never belonged on the device. The backend reads its own from
+    // GROQ_API_KEY (app/vision.py), never from the request, so every board that
+    // ran an older build is holding a secret on its card that nothing will ever
+    // send anywhere. Drop it rather than leave it lying there.
+    if (configDoc.containsKey("groq_api_key")) {
+        configDoc.remove("groq_api_key");
+        Serial.println("Config: dropped the stale groq_api_key.");
         saveConfig();
     }
 
