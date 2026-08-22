@@ -164,6 +164,7 @@ private:
     bool            _offlineFired = false;
 
     bool _loadSweep();          // reads the saved networks into _sweep*
+    void _reportAirwaves();     // scans, and says what the saved networks are
     void _beginAttempt();       // begin() for _netIndex, enters Connecting
     void _sweepFailed();        // one full pass over every network came back empty
     void _goOffline(const char* why);

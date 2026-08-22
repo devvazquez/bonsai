@@ -147,8 +147,44 @@ static const char* staDisconnectReason(uint8_t reason) {
 // honest signal that begin() will now be accepted. See _beginAttempt().
 static volatile bool gStaDisconnected = false;
 
+// Reports the security an AP advertises, so "the password is right" and "the
+// board will not accept this AP" can be told apart.
+static const char* authModeName(wifi_auth_mode_t mode) {
+    switch (mode) {
+        case WIFI_AUTH_OPEN:            return "open";
+        case WIFI_AUTH_WEP:             return "WEP";
+        case WIFI_AUTH_WPA_PSK:         return "WPA";
+        case WIFI_AUTH_WPA2_PSK:        return "WPA2";
+        case WIFI_AUTH_WPA_WPA2_PSK:    return "WPA/WPA2";
+        case WIFI_AUTH_WPA3_PSK:        return "WPA3";
+        case WIFI_AUTH_WPA2_WPA3_PSK:   return "WPA2/WPA3";
+        case WIFI_AUTH_WPA2_ENTERPRISE: return "WPA2-Enterprise";
+        default:                        return "other";
+    }
+}
+
 void WiFiManager::begin(uint32_t timeoutPerNetworkMs) {
     _timeoutPerNetwork = timeoutPerNetworkMs;
+
+    // The framework's auto-reconnect has to go, and this is not a preference.
+    //
+    // STA.cpp reconnects on its own from inside the disconnect handler —
+    // disconnect() then connect() — for any reason it considers retryable, and
+    // AUTH_EXPIRE is one of them. So every attempt we made was landing on a
+    // station the driver had already put back into "connecting", which is why
+    // esp_wifi_set_config() kept returning ESP_ERR_WIFI_STATE: our credentials
+    // were never applied at all. The endless stream of reason 2 was the driver
+    // retrying the previous config, not an answer about the network we asked
+    // for — a network that was not even in range reported a password error.
+    //
+    // The retry policy belongs here, where the list of networks is.
+    WiFi.setAutoReconnect(false);
+
+    // Arduino defaults the minimum to WPA2_PSK and hands it to the driver as
+    // conf.sta.threshold.authmode whenever a password is given, so an AP
+    // advertising plain WPA is refused before the password is ever tried. Not
+    // OPEN: a password was supplied, so an unencrypted AP is not what was meant.
+    WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
 
     // Registered once, for the life of the board. It does two jobs: say why an
     // association failed, and mark the station as settled so the reconnect can
@@ -274,6 +310,34 @@ void WiFiManager::_beginAttempt() {
     _phaseStartMs = millis();
 }
 
+// What the saved networks actually look like on the air. Run once, after the
+// first sweep comes back empty, because it is the only thing that separates
+// "wrong password" from the two faults that look identical from here: an AP on a
+// channel this radio will not associate on, and one whose security the station
+// refuses before the password is ever tried.
+void WiFiManager::_reportAirwaves() {
+    Serial.println("WiFi: scanning to see what is actually out there...");
+    const int found = WiFi.scanNetworks(false, false);
+
+    for (uint32_t i = 0; i < _netCount; ++i) {
+        bool seen = false;
+        for (int j = 0; j < found; ++j) {
+            if (WiFi.SSID(j) != _sweepSsids[i]) continue;
+            seen = true;
+            Serial.printf("  \"%s\": channel %d, %s, %d dBm\n",
+                          _sweepSsids[i].c_str(), WiFi.channel(j),
+                          authModeName(WiFi.encryptionType(j)), WiFi.RSSI(j));
+        }
+        if (!seen) {
+            Serial.printf("  \"%s\": not on the air\n", _sweepSsids[i].c_str());
+        }
+    }
+
+    WiFi.scanDelete();
+    Serial.println("WiFi: a channel above 11 or a WPA3-only AP will not "
+                   "associate however right the password is.");
+}
+
 void WiFiManager::_sweepFailed() {
     _phase       = Phase::Idle;
     _lastCheckMs = millis();
@@ -281,6 +345,10 @@ void WiFiManager::_sweepFailed() {
 
     Serial.printf("WiFi: sweep %u of %u failed\n",
                   (unsigned)_failedSweeps, (unsigned)_maxSweeps);
+
+    // Once only: a scan blocks for a couple of seconds and the answer does not
+    // change between sweeps.
+    if (_failedSweeps == 1) _reportAirwaves();
 
     if (_maxSweeps > 0 && _failedSweeps >= _maxSweeps) {
         _goOffline("out of retries");
