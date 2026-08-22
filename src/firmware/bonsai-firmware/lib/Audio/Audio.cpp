@@ -34,36 +34,34 @@ constexpr size_t kBufferSamples = 512;
 // 8 MB free.
 constexpr size_t kMaxClipBytes = 4 * 1024 * 1024;
 
-// The jitter buffer between the socket and the DMA: eight seconds at 8 kHz, four
-// at 16. It has to hold the prebuffer plus whatever arrives while that is being
-// spoken, so it is sized from kPrebufferMs and not the other way round — at
-// 16 kHz a two second prebuffer is 64 KB on its own, which is the whole of the
-// 64 KB this used to be. A buffer exactly as big as its prebuffer blocks the
-// socket reader the moment playback starts.
+// The jitter buffer between the socket and the DMA: four seconds at the 8 kHz
+// the streaming path asks for. It holds the prebuffer plus whatever arrives
+// while that is being spoken, and 64 KB against a 6.4 KB prebuffer is room to
+// spare. It was briefly 128 KB, sized from a 16 kHz figure that this path never
+// uses.
 //
-// It lives in PSRAM. See _ringStore in Audio.h.
-constexpr size_t   kRingBytes           = 128 * 1024;
+// It lives in PSRAM regardless. See _ringStore in Audio.h.
+constexpr size_t   kRingBytes           = 64 * 1024;
 
 // How long to collect before the first sound, as a fraction of real time rather
 // than a byte count, so it means the same thing at 8 kHz and at 16.
 //
-// This is the one number that trades latency for not stuttering. The link
-// measured 21-30 KB/s, which is ahead of the 16 KB/s that 8 kHz consumes but
-// behind the 32 KB/s that 16 kHz does, and TLS delivers in records rather than
-// evenly — a gap of a few hundred ms is normal and has to be absorbed here or it
-// is audible. At 16 kHz the buffer is covering a deficit, not just jitter, so
-// what is collected up front is most of what there is to play smoothly with.
+// The one number that trades latency for not stuttering, and it is paid in full
+// on every answer, after the capture and the round trip are already spent. So it
+// is kept as small as the link allows.
 //
-// Two seconds, deliberately: it is the number the bench runs sounded right at.
-// It is paid once per answer, on top of the capture and the round trip, and
-// "to answer" in look()'s timing line is where to watch it.
-constexpr uint32_t kPrebufferMs         = 2000;
-
-// Has to leave room to actually reach kPrebufferMs. 64 KB at 21-30 KB/s takes
-// 2.1 to 3.1 seconds, so the old 2500 would have given up short of the target
-// about half the time and quietly started early — the setting would have looked
-// like it did nothing.
-constexpr uint32_t kPrebufferTimeoutMs  = 6000;
+// What the link allows is known. _look() asks for 8 kHz when streaming, which
+// consumes 16 KB/s, and this connection measures 21-30 KB/s: delivery runs ahead
+// of playback by 5 to 14 KB/s. The buffer is therefore absorbing the unevenness
+// of TLS records, not covering a shortfall, and a few hundred milliseconds is
+// the size of the gaps that produces. 400 ms is 6.4 KB, refilled by the surplus
+// in well under a second.
+//
+// An earlier note here said the link was behind playback. That was the 16 kHz
+// arithmetic, and 16 kHz is only ever used for the file path, which buffers the
+// whole clip and never comes through here.
+constexpr uint32_t kPrebufferMs         = 400;
+constexpr uint32_t kPrebufferTimeoutMs  = 2000;
 
 // Silence pushed after the last sample so the DMA plays out what it is still
 // holding before the amplifier is cut. The default I2S config holds about
@@ -240,6 +238,14 @@ void Audio::_playerLoop() {
                && millis() - tWait < kPrebufferTimeoutMs) {
             vTaskDelay(pdMS_TO_TICKS(5));
         }
+
+        // On the record, because it is latency the caller cannot otherwise
+        // see: look() stamps its "first sample" when the first byte lands, and
+        // the first *sound* is this much later.
+        Serial.printf("  [t] prebuffer: %u ms for %u of %u bytes\n",
+                      (unsigned)(millis() - tWait),
+                      (unsigned)xStreamBufferBytesAvailable(_ring),
+                      (unsigned)target);
 
         _underruns = 0;
         _played    = 0;

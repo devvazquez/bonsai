@@ -597,6 +597,10 @@ void setup() {
     //Download default audios if they are missing.
     audio.downloadDefaultAudiosIfMissing(wifi);
 
+    // Last, and only useful if nothing above already made a request: the point
+    // is to leave a live TLS session parked for the first button press.
+    wifi.warmUp();
+
     // A pulled-up pin with the switch idle must read HIGH. A LOW here means the
     // line is held to ground — a bodge wire touching something, or a stuck
     // switch — and no amount of loop() logic makes a press detectable.

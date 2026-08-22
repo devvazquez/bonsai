@@ -563,6 +563,43 @@ String urlEncode(const String& cru) {
 // One request, consumed one of two ways. Exactly one of outStr/outFile is set:
 // a String for the short clips, or straight to the card for anything that would
 // not fit in internal heap. A body makes it a POST.
+void WiFiManager::warmUp() {
+    if (!isConnected() || !_config) return;
+
+    String backendUrl = (*_config)["backend_url"] | "";
+    if (backendUrl.length() == 0) return;
+    while (backendUrl.endsWith("/")) backendUrl.remove(backendUrl.length() - 1);
+    if (!backendUrl.startsWith("https://")) return;   // nothing to hand shake
+
+    // The same _tls and _http objects _request() uses, on purpose: this is only
+    // worth anything if the connection left parked here is the one /look picks
+    // up. Going through _request() itself is not an option — it validates the
+    // body as a WAV and would complain about this one.
+    if (!_tlsReady) {
+        const char* ca = (*_config)["backend_ca"] | "";
+        if (strlen(ca) > 0) _tls.setCACert(ca);
+        else                _tls.setCACertBundle(
+                                rootca_crt_bundle_start,
+                                rootca_crt_bundle_end - rootca_crt_bundle_start);
+        _tlsReady = true;
+    }
+
+    const uint32_t t0 = millis();
+    _http.setConnectTimeout(kHttpTimeoutMs);
+    _http.setTimeout(kHttpTimeoutMs);
+    _http.setReuse(true);
+    if (!_http.begin(_tls, backendUrl + "/api/v1/audios")) return;
+
+    const char* token = (*_config)["api_token"] | "";
+    if (strlen(token) > 0) _http.addHeader("X-API-Token", token);
+
+    const int code = _http.GET();
+    _http.end();   // parks the connection, does not close it
+
+    Serial.printf("  [t] TLS warm-up: %u ms (HTTP %d)\n",
+                  (unsigned)(millis() - t0), code);
+}
+
 bool WiFiManager::_request(const String& ruta, const char* qui,
                           const uint8_t* body, size_t bodyLen,
                           String* outStr, File* outFile, const AudioSink* sink,

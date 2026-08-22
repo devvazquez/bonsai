@@ -65,6 +65,14 @@ public:
     bool   isConnected() const;
     String localIP() const;
 
+    // Opens the TLS session to the backend now, so the first button press does
+    // not pay for it. Verifying the chain against the root bundle costs well
+    // over a second on this chip, and setReuse(true) means it is only ever paid
+    // once — the point is to pay it at boot rather than in front of someone
+    // waiting for an answer. Cheap and best-effort: a failure is not reported,
+    // because the request that matters will report its own.
+    void warmUp();
+
     // Called by BLE when the app sends credentials
     void addNetwork(const String& ssid, const String& password);
     void removeNetwork(const String& ssid);
