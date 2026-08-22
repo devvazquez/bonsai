@@ -110,6 +110,19 @@ static const char* staDisconnectReason(uint8_t reason) {
         case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
         case WIFI_REASON_MIC_FAILURE:
             return "wrong password";
+        case WIFI_REASON_AUTH_EXPIRE:
+            // The AP dropping the authentication rather than refusing it
+            // outright. On most home routers this is still a wrong password,
+            // just reported one step later than AUTH_FAIL.
+            return "the AP expired the authentication (usually a wrong password)";
+        case WIFI_REASON_AUTH_LEAVE:
+        case WIFI_REASON_ASSOC_LEAVE:
+        case WIFI_REASON_STA_LEAVING:
+            return "we disconnected, this one is ours";
+        case WIFI_REASON_DISASSOC_DUE_TO_INACTIVITY:
+            return "the AP dropped us for being idle";
+        case WIFI_REASON_TIMEOUT:
+            return "timed out";
         case WIFI_REASON_NO_AP_FOUND:
             return "no such network in range (2.4 GHz only)";
         case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
@@ -118,7 +131,9 @@ static const char* staDisconnectReason(uint8_t reason) {
             return "found, but below the auth mode threshold";
         case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
             return "found, but too weak";
-        case WIFI_REASON_ASSOC_EXPIRE:
+        // Not ASSOC_EXPIRE alongside it: that is a deprecated alias for the same
+        // value as DISASSOC_DUE_TO_INACTIVITY above, and naming both is a
+        // duplicate case.
         case WIFI_REASON_ASSOC_TOOMANY:
             return "the AP turned us away";
         case WIFI_REASON_BEACON_TIMEOUT:
@@ -128,13 +143,19 @@ static const char* staDisconnectReason(uint8_t reason) {
     }
 }
 
+// Set whenever the station reports it has stopped trying, which is the only
+// honest signal that begin() will now be accepted. See _beginAttempt().
+static volatile bool gStaDisconnected = false;
+
 void WiFiManager::begin(uint32_t timeoutPerNetworkMs) {
     _timeoutPerNetwork = timeoutPerNetworkMs;
 
-    // Registered once, for the life of the board: every failed association from
-    // here on says what went wrong instead of just timing out quietly.
+    // Registered once, for the life of the board. It does two jobs: say why an
+    // association failed, and mark the station as settled so the reconnect can
+    // stop guessing when it is safe to call begin() again.
     WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
         const uint8_t reason = info.wifi_sta_disconnected.reason;
+        gStaDisconnected = true;
         Serial.printf("WiFi: disconnected, reason %u - %s\n",
                       reason, staDisconnectReason(reason));
     }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
@@ -206,11 +227,12 @@ bool WiFiManager::_trySTA(const char* ssid, const char* password) {
 // How long to wait between finishing one failed sweep and starting the next.
 static constexpr uint32_t kSweepGapMs = 10000;
 
-// Breathing room between one attempt and the next. It is only pacing: the thing
-// that actually makes begin() acceptable is the mode cycle in _beginAttempt(),
-// not this delay. An earlier version leaned on this value for that and it did
-// not work — see the note there.
-static constexpr uint32_t kSettleMs = 400;
+// Longest we wait for the station to report itself settled before starting the
+// next attempt anyway. It is a backstop, not the mechanism: normally the
+// disconnect event arrives in a few tens of milliseconds and Settling ends
+// there. The cap matters for the case where there was nothing to disconnect
+// from, which produces no event at all.
+static constexpr uint32_t kSettleMaxMs = 1200;
 
 bool WiFiManager::_loadSweep() {
     _netIndex = 0;
@@ -221,28 +243,32 @@ bool WiFiManager::_loadSweep() {
 }
 
 void WiFiManager::_beginAttempt() {
-    // The mode is cycled before every attempt, and a plain disconnect() is not
-    // enough to replace it.
+    // Nothing is torn down here, and getting to that took two wrong turns worth
+    // recording.
     //
     // WiFi.begin() starts with esp_wifi_set_config(), which IDF refuses with
     // ESP_ERR_WIFI_STATE while the station is still working through a previous
-    // connect — "sta is connecting, cannot set config". There is nothing to wait
-    // for either: STAClass only ever reports WL_DISCONNECTED, WL_IDLE_STATUS,
+    // connect — "sta is connecting, cannot set config". There is nothing to poll
+    // either: STAClass reports only WL_DISCONNECTED, WL_IDLE_STATUS,
     // WL_CONNECTED and WL_STOPPED, with no value meaning "connecting", so
-    // status() reads exactly the same before an attempt and during one. A fixed
-    // settling delay was a guess, and 400 ms was the wrong guess: sweeps two and
-    // three failed instantly instead of retrying.
+    // status() reads the same before an attempt and during one.
     //
-    // Turning the mode off and back on leaves the driver in a state begin() will
-    // accept, without having to infer anything. It costs about 100 ms of
-    // blocking inside WiFi.mode(), which is two orders off the five seconds this
-    // whole exercise is about removing from the loop.
+    // A fixed 400 ms settle was a guess at when that ends, and the wrong one:
+    // sweeps two and three failed instantly instead of retrying.
+    //
+    // Cycling WIFI_OFF/WIFI_STA did clear that state, and was the wrong fix:
+    // WIFI_OFF stops the driver, and the begin() below then landed on a stack
+    // that had not finished starting — ESP_ERR_WIFI_NOT_STARTED, which is the
+    // very thing the comment in _trySTA warns about.
+    //
+    // What works is waiting for the disconnect to actually complete, which the
+    // driver does tell us: the event handler registered in begin() sets
+    // gStaDisconnected, and Settling waits on it. By the time we get here the
+    // station is idle and set_config is accepted, with the driver still running.
     Serial.printf("WiFi: trying \"%s\" (password %u chars)\n",
                   _sweepSsids[_netIndex].c_str(),
                   (unsigned)_sweepPasses[_netIndex].length());
 
-    WiFi.mode(WIFI_OFF);
-    WiFi.mode(WIFI_STA);
     WiFi.begin(_sweepSsids[_netIndex].c_str(), _sweepPasses[_netIndex].c_str());
     _phase        = Phase::Connecting;
     _phaseStartMs = millis();
@@ -282,15 +308,20 @@ void WiFiManager::loop() {
             }
             if (millis() - _phaseStartMs < _timeoutPerNetwork) return;
 
-            // This one is not going to answer. Line up the next; _beginAttempt()
-            // cycles the mode, so there is nothing to tear down here.
+            // This one is not going to answer. Ask the station to stop, and
+            // wait for it to say it has: clearing the flag first so an event
+            // from earlier cannot pass for this one.
             ++_netIndex;
+            gStaDisconnected = false;
+            WiFi.disconnect(false);
             _phase        = Phase::Settling;
             _phaseStartMs = millis();
             return;
 
         case Phase::Settling:
-            if (millis() - _phaseStartMs < kSettleMs) return;
+            if (!gStaDisconnected && millis() - _phaseStartMs < kSettleMaxMs) {
+                return;
+            }
             if (_netIndex < _netCount) _beginAttempt();
             else                       _sweepFailed();
             return;
@@ -309,8 +340,13 @@ void WiFiManager::loop() {
             _notify(WiFiStatus::Reconnecting);
             if (!_loadSweep()) return;
 
-            // Via Settling rather than straight into the attempt, so a sweep is
-            // never started in the same iteration that noticed it was needed.
+            // Through Settling, so whatever the station was doing has ended
+            // before the first begin() of the sweep. mode() is set here and
+            // never unset: stopping the driver is what produced
+            // ESP_ERR_WIFI_NOT_STARTED.
+            WiFi.mode(WIFI_STA);
+            gStaDisconnected = false;
+            WiFi.disconnect(false);
             _phase        = Phase::Settling;
             _phaseStartMs = millis();
             return;

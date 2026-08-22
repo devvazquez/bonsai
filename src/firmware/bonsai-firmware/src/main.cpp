@@ -538,16 +538,6 @@ void setup() {
         saveConfig();
     }
 
-    // The Groq key never belonged on the device. The backend reads its own from
-    // GROQ_API_KEY (app/vision.py), never from the request, so every board that
-    // ran an older build is holding a secret on its card that nothing will ever
-    // send anywhere. Drop it rather than leave it lying there.
-    if (configDoc.containsKey("groq_api_key")) {
-        configDoc.remove("groq_api_key");
-        Serial.println("Config: dropped the stale groq_api_key.");
-        saveConfig();
-    }
-
     // Before the WiFi stack and before the photo task: with no network to join
     // there is nothing for the rest of setup() to do, and the portal reboots the
     // board anyway, so anything started here would only be torn down again.
