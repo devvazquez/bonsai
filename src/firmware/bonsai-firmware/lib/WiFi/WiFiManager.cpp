@@ -157,13 +157,98 @@ bool WiFiManager::_trySTA(const char* ssid, const char* password) {
     return true;
 }
 
-void WiFiManager::loop() {
-    if (millis() - _lastCheckMs < 10000) return;
-    _lastCheckMs = millis();
+// How long to wait between finishing one failed sweep and starting the next.
+static constexpr uint32_t kSweepGapMs = 10000;
 
-    if (WiFi.status() != WL_CONNECTED) {
-        _notify(WiFiStatus::Reconnecting);
-        _tryAllNetworks();
+// After disconnect(), before the next begin(). Without it the driver is still in
+// "sta is connecting" and the next begin() is refused outright with
+// ESP_ERR_WIFI_CONN — which is how a board with a wrong password ended up
+// printing that error for ever instead of working through its networks.
+static constexpr uint32_t kSettleMs = 400;
+
+bool WiFiManager::_loadSweep() {
+    _netIndex = 0;
+    _netCount = 0;
+    if (!_config) return false;
+    return loadNetworksFromJson(*_config, _sweepSsids, _sweepPasses, _netCount)
+           && _netCount > 0;
+}
+
+void WiFiManager::_beginAttempt() {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(_sweepSsids[_netIndex].c_str(), _sweepPasses[_netIndex].c_str());
+    _phase        = Phase::Connecting;
+    _phaseStartMs = millis();
+}
+
+void WiFiManager::_sweepFailed() {
+    _phase       = Phase::Idle;
+    _lastCheckMs = millis();
+    ++_failedSweeps;
+
+    Serial.printf("WiFi: sweep %u of %u failed\n",
+                  (unsigned)_failedSweeps, (unsigned)_maxSweeps);
+
+    if (_maxSweeps > 0 && _failedSweeps >= _maxSweeps) {
+        _goOffline("out of retries");
+    }
+}
+
+void WiFiManager::_goOffline(const char* why) {
+    // Once per outage: the handler raises a portal and reboots, and firing it
+    // again from the next request would stack that on top of itself.
+    if (_offlineFired) return;
+    _offlineFired = true;
+    Serial.printf("WiFi: offline (%s)\n", why);
+    if (_onOffline) _onOffline(why);
+}
+
+void WiFiManager::loop() {
+    switch (_phase) {
+        case Phase::Connecting:
+            if (WiFi.status() == WL_CONNECTED) {
+                _phase        = Phase::Idle;
+                _failedSweeps = 0;
+                _offlineFired = false;
+                _notify(WiFiStatus::Connected, WiFi.localIP().toString());
+                return;
+            }
+            if (millis() - _phaseStartMs < _timeoutPerNetwork) return;
+
+            // This one is not going to answer. Drop it and line up the next.
+            WiFi.disconnect(false);
+            ++_netIndex;
+            _phase        = Phase::Settling;
+            _phaseStartMs = millis();
+            return;
+
+        case Phase::Settling:
+            if (millis() - _phaseStartMs < kSettleMs) return;
+            if (_netIndex < _netCount) _beginAttempt();
+            else                       _sweepFailed();
+            return;
+
+        case Phase::Idle:
+            if (WiFi.status() == WL_CONNECTED) {
+                _failedSweeps = 0;
+                _offlineFired = false;
+                return;
+            }
+            // Nothing more to try: stay quiet rather than sweeping for ever.
+            if (_maxSweeps > 0 && _failedSweeps >= _maxSweeps) return;
+            if (millis() - _lastCheckMs < kSweepGapMs) return;
+
+            _lastCheckMs = millis();
+            _notify(WiFiStatus::Reconnecting);
+            if (!_loadSweep()) return;
+
+            // Straight into Settling: whatever the last attempt left behind has
+            // to clear before begin() will be accepted.
+            WiFi.mode(WIFI_STA);
+            WiFi.disconnect(false);
+            _phase        = Phase::Settling;
+            _phaseStartMs = millis();
+            return;
     }
 }
 
@@ -307,7 +392,15 @@ bool WiFiManager::_request(const String& ruta, const char* qui,
         Serial.printf("%s: backend_url is not set\n", qui);
         return false;
     }
-    if (!isConnected()) return false;
+    // Every call out to the backend funnels through here, so this is the one
+    // place that can tell "asked for the network while it was down" from a
+    // reconnect that is simply still in progress. Do not wait for the retry
+    // budget: the user pressed a button and something has to answer them.
+    if (!isConnected()) {
+        Serial.printf("%s: no network\n", qui);
+        _goOffline("a request was made with no network");
+        return false;
+    }
 
     while (backendUrl.endsWith("/")) backendUrl.remove(backendUrl.length() - 1);
     const String url = backendUrl + ruta;

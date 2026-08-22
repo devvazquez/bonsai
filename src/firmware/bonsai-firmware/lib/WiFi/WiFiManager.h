@@ -48,6 +48,20 @@ public:
 
     void onStatusChange(StatusCallback cb) { _statusCallback = cb; }
 
+    // Fired once when the board has given up on getting online, either because
+    // the retry budget ran out or because something asked for the network while
+    // it was down. Cleared when a connection is established, so a later outage
+    // fires again.
+    //
+    // It can be called from inside a request, so the handler must not block or
+    // touch the card or the amplifier — set a flag and act from loop().
+    using OfflineCallback = std::function<void(const char* why)>;
+    void onOffline(OfflineCallback cb) { _onOffline = std::move(cb); }
+
+    // Full sweeps of every saved network to try before calling it offline.
+    // 0 retries for ever, which is the old behaviour.
+    void setMaxReconnectSweeps(uint32_t sweeps) { _maxSweeps = sweeps; }
+
     bool   isConnected() const;
     String localIP() const;
 
@@ -119,6 +133,40 @@ private:
 
     uint32_t _lastCheckMs       = 0;
     uint32_t _timeoutPerNetwork = 5000;
+
+    // --- non-blocking reconnect ---------------------------------------------
+    //
+    // loop() used to run a whole blocking sweep: _trySTA() sat in a
+    // while/delay(100) for up to _timeoutPerNetwork per network, so a board that
+    // could not reach its network froze the Arduino loop for five seconds at a
+    // time. The button is polled by that loop, so pressing it did nothing for
+    // seconds. Now loop() only ever advances this small machine and returns.
+    //
+    // begin() is still blocking on purpose: at boot there is nothing else to do
+    // and the board should get its best shot at connecting before setup() goes
+    // on to things that need the network.
+    enum class Phase : uint8_t {
+        Idle,        // connected, or waiting out the gap before the next sweep
+        Settling,    // disconnect() issued, letting the driver leave "connecting"
+        Connecting,  // begin() issued for _netIndex, waiting on the deadline
+    };
+
+    Phase    _phase          = Phase::Idle;
+    uint32_t _phaseStartMs   = 0;
+    uint32_t _netIndex       = 0;
+    uint32_t _netCount       = 0;
+    String   _sweepSsids[WIFI_MAX_NETWORKS];
+    String   _sweepPasses[WIFI_MAX_NETWORKS];
+
+    OfflineCallback _onOffline;
+    uint32_t        _maxSweeps    = 3;
+    uint32_t        _failedSweeps = 0;
+    bool            _offlineFired = false;
+
+    bool _loadSweep();          // reads the saved networks into _sweep*
+    void _beginAttempt();       // begin() for _netIndex, enters Connecting
+    void _sweepFailed();        // one full pass over every network came back empty
+    void _goOffline(const char* why);
 
     bool _tryAllNetworks();
     bool _trySTA(const char* ssid, const char* password);

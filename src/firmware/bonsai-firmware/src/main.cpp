@@ -421,6 +421,16 @@ void setLang(const String& nou) {
 }  // namespace bonsai
 
 
+// Set by WiFiManager when it has given up, or when something asked for the
+// network while it was down. Only a flag: that callback can arrive from inside a
+// request, with the audio sink mid-stream and the card lock held, so the clip and
+// the portal happen from loop() where nothing else owns GPIO8.
+volatile bool offlineRequested = false;
+
+void onWiFiOffline(const char* why) {
+    offlineRequested = true;
+}
+
 void onWiFiStatus(WiFiStatus status, const String& detail) {
     switch (status) {
         case WiFiStatus::Connected:
@@ -527,6 +537,10 @@ void setup() {
     }
 
     wifi.onStatusChange(onWiFiStatus);
+    wifi.onOffline(onWiFiOffline);
+    // Three sweeps of every saved network, then stop and ask for help rather
+    // than reconnecting into the void for ever.
+    wifi.setMaxReconnectSweeps(3);
     wifi.setConfig(configDoc, saveConfig);
     wifi.setSdLock(sdLock);
     wifi.begin();
@@ -586,6 +600,17 @@ void setup() {
 }
 
 void loop() {
+    // Out of network: say so out loud and put the panel up, so the way to fix
+    // it is the same whether the retries ran out or a button press just found
+    // there was nothing there. Checked first — this is the board announcing it
+    // cannot do its job, and everything below assumes it can.
+    if (offlineRequested) {
+        offlineRequested = false;
+        Serial.println("No network: playing the clip and raising the panel.");
+        audio.playDefault(DefaultAudios::NO_WIFI);
+        runSetupPortal(SetupPortal::Mode::Panel);
+    }
+
     // Button: debounce, then single / double / long press.
     //
     // Presses are counted on release rather than on the falling edge, which is
