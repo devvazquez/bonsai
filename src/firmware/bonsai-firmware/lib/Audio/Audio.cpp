@@ -251,16 +251,31 @@ void Audio::_playerLoop() {
         _played    = 0;
 
         for (;;) {
+            // 20 ms and not 100: this is how long the DMA is left unfed when
+            // there is nothing to send, and it has to stay well inside what the
+            // DMA holds.
             const size_t got = xStreamBufferReceive(_ring, mono, sizeof(mono),
-                                                    pdMS_TO_TICKS(100));
+                                                    pdMS_TO_TICKS(20));
             if (got == 0) {
                 // Nothing waiting: either the sentence is over, or the network
                 // is behind and the DMA is about to run dry anyway.
                 if (_ending && xStreamBufferBytesAvailable(_ring) == 0) break;
+
                 // Wanted samples and had none: that is a hole in the audio, and
                 // counting them is the only way to tell a smooth stream from a
                 // choppy one without standing next to the speaker.
                 ++_underruns;
+
+                // Silence, not nothing, and this is the whole point. The TX DMA
+                // is circular: starve it and the hardware sends its last buffer
+                // again, and again, which is heard as the previous fragment
+                // stuttering — a word that repeats or clips. Feeding it zeros
+                // renders a hole in the network as a short gap instead, which is
+                // both honest and far less objectionable.
+                memset(stereo, 0, sizeof(stereo));
+                size_t quiet = 0;
+                i2s_channel_write(_tx, stereo, sizeof(stereo), &quiet,
+                                  portMAX_DELAY);
                 continue;
             }
             _played += got;
@@ -391,10 +406,13 @@ void Audio::endStream() {
     _hasCarry     = false;
     _ending       = false;
 
-    Serial.printf("  [t] audio: %u KB played at %u Hz (%u ms), %u underruns\n",
+    // Underruns in milliseconds of silence inserted, not as a bare count: each
+    // one is a 20 ms hole, and "12" means nothing next to "240 ms of gaps".
+    Serial.printf("  [t] audio: %u KB played at %u Hz (%u ms), %u underruns "
+                  "(~%u ms of gaps)\n",
                   (unsigned)(_played / 1024), _streamRate,
                   _streamRate ? (unsigned)(_played * 1000 / (_streamRate * 2)) : 0u,
-                  _underruns);
+                  _underruns, (unsigned)(_underruns * 20));
 }
 
 bool Audio::beep(uint32_t freqHz, uint32_t ms) {
