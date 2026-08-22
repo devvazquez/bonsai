@@ -56,16 +56,26 @@ void SetupPortal::begin(JsonDocument& config, SaveCallback onSave, Mode mode) {
     // AP_STA and not AP: /api/scan needs the station side to see other networks.
     WiFi.mode(WIFI_AP_STA);
 
-    // Only on first boot, where there is nothing to disconnect from and any
-    // half-open association is in the way. In panel mode the board is already on
-    // the user's network, and keeping that link is what lets /api/test actually
-    // reach the backend instead of answering "ap_mode" — the one thing the test
-    // button is for. The AP gets pulled onto the station's channel, which the
-    // core handles.
-    if (_mode == Mode::Onboarding) WiFi.disconnect(true);
+    // Whether the station is actually connected, not which mode we are in.
+    //
+    // A live association is worth keeping: it is what lets /api/test reach the
+    // backend instead of answering "ap_mode", which is the only thing the test
+    // button is for. A station that is merely *trying*, though, has to go. It
+    // keeps the radio scanning off-channel for a network that is not there, the
+    // access point's beacons go out only between those scans, and the phone
+    // never sees it in its list — which is exactly the state the panel comes up
+    // in when the retries have just run out.
+    const bool staLive = WiFi.status() == WL_CONNECTED;
+    if (!staLive) WiFi.disconnect(true);
 
     const String ssid = apName();
-    WiFi.softAP(ssid.c_str(), kApPassword, kApChannel, false, kApMaxConn);
+    if (!WiFi.softAP(ssid.c_str(), kApPassword, kApChannel, false, kApMaxConn)) {
+        // Worth failing loudly: without this the line below cheerfully announces
+        // a network to join that was never created, and the only symptom is
+        // someone staring at their phone.
+        Serial.println("Setup portal: softAP failed, there is no network to join");
+        return;
+    }
     _apSsid = ssid;
 
     const IPAddress ip = WiFi.softAPIP();
@@ -83,9 +93,14 @@ void SetupPortal::begin(JsonDocument& config, SaveCallback onSave, Mode mode) {
     _server.onNotFound([this] { _handleNotFound(); });
     _server.begin();
 
-    Serial.printf("Setup portal up (%s): join \"%s\" and open http://%s/\n",
+    // Channel and station state included on purpose: "I cannot see the network"
+    // is otherwise indistinguishable from "the AP never came up", and those have
+    // nothing to do with each other.
+    Serial.printf("Setup portal up (%s): join \"%s\" on channel %d, "
+                  "open http://%s/ (station %s)\n",
                   mode == Mode::Panel ? "panel" : "onboarding",
-                  ssid.c_str(), ip.toString().c_str());
+                  ssid.c_str(), WiFi.channel(), ip.toString().c_str(),
+                  staLive ? "kept, connected" : "stopped");
 }
 
 void SetupPortal::loop() {
