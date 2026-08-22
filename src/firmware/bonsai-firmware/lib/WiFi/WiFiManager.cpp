@@ -324,9 +324,22 @@ void WiFiManager::_reportAirwaves() {
         for (int j = 0; j < found; ++j) {
             if (WiFi.SSID(j) != _sweepSsids[i]) continue;
             seen = true;
-            Serial.printf("  \"%s\": channel %d, %s, %d dBm\n",
+            const int32_t rssi = WiFi.RSSI(j);
+
+            // Beacons are sent slowly and robustly, so an AP shows up in a scan
+            // long after it has become impossible to associate with: the reply
+            // from this end never arrives and the authentication expires. Below
+            // about -80 dBm that is the likeliest reading of a reason 2, far
+            // ahead of the password being wrong.
+            const char* signal = rssi >= -60 ? "strong"
+                               : rssi >= -75 ? "usable"
+                               : rssi >= -85 ? "weak"
+                                             : "too weak to associate";
+
+            Serial.printf("  \"%s\": channel %d, %s, %d dBm (%s)\n",
                           _sweepSsids[i].c_str(), WiFi.channel(j),
-                          authModeName(WiFi.encryptionType(j)), WiFi.RSSI(j));
+                          authModeName(WiFi.encryptionType(j)), (int)rssi,
+                          signal);
         }
         if (!seen) {
             Serial.printf("  \"%s\": not on the air\n", _sweepSsids[i].c_str());
@@ -334,8 +347,8 @@ void WiFiManager::_reportAirwaves() {
     }
 
     WiFi.scanDelete();
-    Serial.println("WiFi: a channel above 11 or a WPA3-only AP will not "
-                   "associate however right the password is.");
+    Serial.println("WiFi: a weak signal, a channel above 11 or a WPA3-only AP "
+                   "all fail however right the password is.");
 }
 
 void WiFiManager::_sweepFailed() {
