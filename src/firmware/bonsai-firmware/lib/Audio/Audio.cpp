@@ -34,21 +34,36 @@ constexpr size_t kBufferSamples = 512;
 // 8 MB free.
 constexpr size_t kMaxClipBytes = 4 * 1024 * 1024;
 
-// The jitter buffer between the socket and the DMA: four seconds at 8 kHz.
-// It only needs to be big enough to hold the prebuffer plus whatever arrives
-// while a burst is being spoken.
-constexpr size_t   kRingBytes           = 64 * 1024;
+// The jitter buffer between the socket and the DMA: eight seconds at 8 kHz, four
+// at 16. It has to hold the prebuffer plus whatever arrives while that is being
+// spoken, so it is sized from kPrebufferMs and not the other way round — at
+// 16 kHz a two second prebuffer is 64 KB on its own, which is the whole of the
+// 64 KB this used to be. A buffer exactly as big as its prebuffer blocks the
+// socket reader the moment playback starts.
+//
+// It lives in PSRAM. See _ringStore in Audio.h.
+constexpr size_t   kRingBytes           = 128 * 1024;
 
 // How long to collect before the first sound, as a fraction of real time rather
 // than a byte count, so it means the same thing at 8 kHz and at 16.
 //
 // This is the one number that trades latency for not stuttering. The link
-// measured 21-30 KB/s against the 16 KB/s that 8 kHz consumes, so it is ahead
-// on average but only by a little, and TLS delivers in records rather than
-// evenly — a gap of a few hundred ms is normal and has to be absorbed here or
-// it is audible.
-constexpr uint32_t kPrebufferMs         = 1000;
-constexpr uint32_t kPrebufferTimeoutMs  = 2500;
+// measured 21-30 KB/s, which is ahead of the 16 KB/s that 8 kHz consumes but
+// behind the 32 KB/s that 16 kHz does, and TLS delivers in records rather than
+// evenly — a gap of a few hundred ms is normal and has to be absorbed here or it
+// is audible. At 16 kHz the buffer is covering a deficit, not just jitter, so
+// what is collected up front is most of what there is to play smoothly with.
+//
+// Two seconds, deliberately: it is the number the bench runs sounded right at.
+// It is paid once per answer, on top of the capture and the round trip, and
+// "to answer" in look()'s timing line is where to watch it.
+constexpr uint32_t kPrebufferMs         = 2000;
+
+// Has to leave room to actually reach kPrebufferMs. 64 KB at 21-30 KB/s takes
+// 2.1 to 3.1 seconds, so the old 2500 would have given up short of the target
+// about half the time and quietly started early — the setting would have looked
+// like it did nothing.
+constexpr uint32_t kPrebufferTimeoutMs  = 6000;
 
 // Silence pushed after the last sample so the DMA plays out what it is still
 // holding before the amplifier is cut. The default I2S config holds about
@@ -269,9 +284,22 @@ bool Audio::beginStream(uint32_t sampleRate) {
     if (sampleRate == 0) sampleRate = kStartRate;
 
     if (!_ring) {
-        _ring = xStreamBufferCreate(kRingBytes, 1);
+        // PSRAM, and static rather than xStreamBufferCreate: 128 KB out of the
+        // internal heap is 128 KB WiFi and TLS do not get, on a chip with 320 KB
+        // of it and 8 MB of PSRAM going spare. FreeRTOS wants one spare byte in
+        // the storage area beyond the buffer's capacity.
+        if (!_ringStore) {
+            _ringStore = (uint8_t*)heap_caps_malloc(kRingBytes + 1,
+                                                    MALLOC_CAP_SPIRAM);
+        }
+        if (!_ringStore) {
+            Serial.printf("No PSRAM for a %u byte audio buffer\n",
+                          (unsigned)kRingBytes);
+            return false;
+        }
+        _ring = xStreamBufferCreateStatic(kRingBytes, 1, _ringStore, &_ringCtl);
         if (!_ring) {
-            Serial.printf("No memory for a %u byte audio buffer\n", kRingBytes);
+            Serial.println("Could not create the audio ring buffer");
             return false;
         }
     }

@@ -126,6 +126,14 @@ private:
     void        _playerLoop();
 
     StreamBufferHandle_t _ring    = nullptr;   // network -> player
+
+    // The ring's storage lives in PSRAM, so growing it to hold a two second
+    // prebuffer does not come out of the internal heap that WiFi and TLS need.
+    // Only the small control block is internal. Legal because both ends of this
+    // buffer are tasks — PSRAM must not be touched from an ISR, and nothing here
+    // does.
+    StaticStreamBuffer_t _ringCtl{};
+    uint8_t*             _ringStore = nullptr;
     TaskHandle_t         _player  = nullptr;
     SemaphoreHandle_t    _drained = nullptr;   // player says the ring is empty
     volatile bool        _ending  = false;
