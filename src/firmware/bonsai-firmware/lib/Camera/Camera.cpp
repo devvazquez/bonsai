@@ -15,12 +15,12 @@ namespace {
 constexpr int kOv3660Vflip      = 1;
 constexpr int kOv3660Hmirror    = 0;
 
-// Raised from -2, which carried the note "stock colours are overcooked", to
-// match a live tune done against the sensor's own web preview. The preview wins
-// on a judgement like this — someone was looking at the picture — but the note
-// it replaces was not wrong either, so if descriptions start mentioning
-// implausibly vivid colours this is the line.
-constexpr int kOv3660Saturation = 3;
+// Neutral, after photos came out with a magenta cast. This was +3 from the live
+// web-preview tune, and before that -2 with the note "stock colours are
+// overcooked". Saturation does not create a colour cast, but it multiplies one,
+// so while the cast is being chased this line stays out of the way. The real
+// suspect is the AWB gain below.
+constexpr int kOv3660Saturation = 0;
 
 // +1 from the live tune, and this one is worth reading before trusting it.
 //
@@ -142,7 +142,15 @@ void Camera::_applySensorTuning() {
     // sensor's own defaults mostly already agree with, set explicitly so the
     // picture does not depend on what the driver happened to leave behind.
     s->set_whitebal(s, 1);        // AWB
-    s->set_awb_gain(s, 0);        // Advanced AWB off
+    // On, which is the driver's own default and what this line overrode. The
+    // distinction matters: set_whitebal lets the sensor *decide* a white
+    // balance, set_awb_gain lets it *apply* the resulting R/B channel gains.
+    // With the gain off the sensor measures the cast and then leaves it in the
+    // frame, which is how a room lit like any other room comes out magenta.
+    // The 0 came off a screenshot of the web panel's slider positions, by the
+    // commit's own admission accurate only to within a step; a switch read the
+    // wrong way round is exactly this bug.
+    s->set_awb_gain(s, 1);        // Advanced AWB on
     s->set_wb_mode(s, 0);         // Manual AWB off, so AWB is free to work
     s->set_exposure_ctrl(s, 1);   // AEC
     s->set_gain_ctrl(s, 1);       // AGC
