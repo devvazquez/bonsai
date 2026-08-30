@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bonsai Web Flasher</title>
+<meta name="description" content="Flash the latest Bonsai firmware release to a Bonsai board over USB, straight from the browser.">
+<link rel="icon" href="assets/bonsai-mark.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="./">
+    <img src="assets/bonsai-mark.png" alt="">
+    <span>bonsai <em>flasher</em></span>
+  </a>
+  <nav>
+    <a href="https://github.com/devvazquez/bonsai" id="repo-link">Repository</a>
+    <a href="https://github.com/devvazquez/bonsai/releases" id="releases-link">Releases</a>
+  </nav>
+</header>
+
+<main>
+
+  <section class="intro">
+    <h1>Flash a board from the browser</h1>
+    <p>
+      Plug a Bonsai board (Seeed XIAO ESP32-S3 Sense) into a USB port, pick a firmware
+      release and write it. Nothing is uploaded anywhere: the release is downloaded from
+      GitHub and pushed over the serial port by your own browser.
+    </p>
+    <p class="hint" id="support-line">Checking browser support&hellip;</p>
+  </section>
+
+  <div class="columns">
+
+    <!-- ---------------------------------------------------------------- -->
+    <section class="panel" id="devices-panel">
+      <h2>devices</h2>
+
+      <div class="row">
+        <button id="connect" class="primary" disabled>Connect a board</button>
+        <button id="disconnect" class="ghost" hidden>Disconnect</button>
+      </div>
+
+      <p class="hint" id="devices-hint">
+        The board shows up as a serial port. If nothing appears in the browser
+        prompt, hold <b>BOOT</b>, tap <b>RESET</b>, release <b>BOOT</b>, then try again.
+      </p>
+
+      <h3>connected</h3>
+      <dl class="kv" id="chip-info">
+        <div><dt>status</dt><dd id="k-status">not connected</dd></div>
+        <div><dt>chip</dt><dd id="k-chip">&mdash;</dd></div>
+        <div><dt>revision</dt><dd id="k-rev">&mdash;</dd></div>
+        <div><dt>features</dt><dd id="k-features">&mdash;</dd></div>
+        <div><dt>crystal</dt><dd id="k-crystal">&mdash;</dd></div>
+        <div><dt>MAC</dt><dd id="k-mac">&mdash;</dd></div>
+        <div><dt>flash</dt><dd id="k-flash">&mdash;</dd></div>
+        <div><dt>port</dt><dd id="k-port">&mdash;</dd></div>
+      </dl>
+
+      <h3>known ports</h3>
+      <ul class="ports" id="ports"><li class="empty">No ports authorised for this site yet.</li></ul>
+    </section>
+
+    <!-- ---------------------------------------------------------------- -->
+    <section class="panel" id="versions-panel">
+      <h2>versions</h2>
+
+      <div class="row">
+        <select id="release" disabled><option>Loading releases&hellip;</option></select>
+        <button id="reload" class="ghost" title="Re-read the release list">Refresh</button>
+      </div>
+
+      <div id="release-detail" class="detail" hidden>
+        <dl class="kv">
+          <div><dt>tag</dt><dd id="r-tag">&mdash;</dd></div>
+          <div><dt>published</dt><dd id="r-date">&mdash;</dd></div>
+          <div><dt>channel</dt><dd id="r-channel">&mdash;</dd></div>
+          <div><dt>notes</dt><dd id="r-notes">&mdash;</dd></div>
+        </dl>
+        <h3>flash plan</h3>
+        <table class="plan"><tbody id="plan"></tbody></table>
+      </div>
+
+      <p class="hint" id="releases-hint"></p>
+
+      <div class="row options">
+        <label>
+      <input type="checkbox" id="erase">
+      <span>Erase the whole flash first &mdash; wipes <code>/config.json</code>, so the
+      Wi-Fi list and the language have to be set again over the serial console.</span>
+    </label>
+      </div>
+
+      <div class="row">
+        <button id="flash" class="primary" disabled>Flash this release</button>
+      </div>
+
+      <div class="progress" id="progress" hidden>
+        <div class="bar"><span id="bar"></span></div>
+        <p class="hint" id="progress-label"></p>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <section class="panel console-panel">
+    <h2>console</h2>
+    <pre id="console" class="console" aria-live="polite">Waiting for a board.</pre>
+    <p class="hint">
+      After flashing, open a serial monitor at 115200 baud and type <code>help</code>:
+      the firmware is configured from that console.
+    </p>
+  </section>
+
+</main>
+
+<footer>
+  <p>
+    Bonsai &mdash; <a href="https://github.com/devvazquez/bonsai">devvazquez/bonsai</a>.
+    Flashing runs on <a href="https://github.com/espressif/esptool-js">esptool-js</a>
+    over the Web Serial API.
+  </p>
+</footer>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
