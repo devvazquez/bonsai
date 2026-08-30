@@ -24,9 +24,11 @@ Thanks to the board, a XIAO ESP32 Sense, we can use the provided camera to give 
 Using the built-in web server in the firmware, you can configre all the Wifi networks, and default user button actions. You can also change parameters such as default language. Some of these parameters can also be configured using the wake word (ex. "Hey Bonsai, change the language to Spanish"). 
 
 ## Flashing a board
-The [web flasher](https://devvazquez.github.io/bonsai/) writes a firmware release to a board over USB from the browser — no toolchain, no PlatformIO. Plug the board in, pick a release and press flash; Chrome, Edge or Opera on a desktop are needed, since it runs on the Web Serial API.
+The [web flasher](https://devvazquez.github.io/bonsai/) writes a firmware release to a board over USB from the browser, with no toolchain to install. Plug the board in, pick a version and press write. It needs Chrome, Edge or Opera on a computer, since it runs on the Web Serial API.
 
-The page lives in [`docs/`](docs/) and is published by GitHub Pages. See [`docs/README.md`](docs/README.md) for what a release has to attach for the flasher to pick it up.
+Tagging a commit `v*` builds the firmware and publishes the release the page reads (`.github/workflows/release.yml`). The page itself lives in [`docs/`](docs/) and is described in [`docs/README.md`](docs/README.md).
+
+Your settings are safe across a flash: `/config.json`, the saved networks and the voice clips are on the SD card, and only the firmware images get replaced.
 
 ## Bill of Materials
 | Name | Purpose | Quantity | Total Cost (USD) | Link | Distributor |

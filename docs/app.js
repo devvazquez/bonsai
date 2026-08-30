@@ -1,111 +1,102 @@
-/* Bonsai web flasher.
+/* Flash Bonsai.
  *
- * Downloads a firmware release from the repository's GitHub releases and writes
- * it to a board over the Web Serial API, using esptool-js. Everything happens in
- * the browser: the binaries go from GitHub to the serial port and nowhere else.
+ * Reads the repository's GitHub releases, then writes the one you pick to a
+ * board over the Web Serial API with esptool-js. The binaries travel from
+ * GitHub to the serial port inside the browser; no server sees them.
  */
 
 import { ESPLoader, Transport } from "./vendor/esptool-js/bundle.js";
 
-/* --------------------------------------------------------------------------
- * Which repository to read releases from.
- *
- * Derived from the URL so a fork serves its own releases without editing this
- * file: user.github.io/repo/ gives both halves. Anything else (a local file, a
- * custom domain) falls back to the upstream repository.
- * ---------------------------------------------------------------------- */
-
-const FALLBACK_REPO = { owner: "devvazquez", repo: "bonsai" };
-
+/* Which repository the releases come from. Derived from the URL so a fork
+ * serves its own builds; anything that is not a project page falls back. */
 function detectRepo() {
   const host = location.hostname;
   const seg = location.pathname.split("/").filter(Boolean);
   if (host.endsWith(".github.io") && seg.length > 0) {
-    const owner = host.slice(0, -".github.io".length);
-    // user.github.io/user.github.io is the user site: its repo is the host.
-    return { owner, repo: seg[0] };
+    return { owner: host.slice(0, -".github.io".length), repo: seg[0] };
   }
-  return FALLBACK_REPO;
+  return { owner: "devvazquez", repo: "bonsai" };
 }
 
 const REPO = detectRepo();
 const API = `https://api.github.com/repos/${REPO.owner}/${REPO.repo}`;
 
-/* --------------------------------------------------------------------------
- * Flash layout.
- *
- * A release can say where its parts go by shipping a manifest.json; when it
- * does not, the file names are matched against the standard ESP-IDF layout
- * that PlatformIO produces for this board.
- * ---------------------------------------------------------------------- */
-
+/* Where each image goes when a release ships no manifest.json. These are the
+ * names PlatformIO produces, at the offsets the ESP32-S3 expects. */
 const PART_RULES = [
-  { re: /bootloader.*\.bin$/i,                    offset: 0x0000 },
+  { re: /bootloader.*\.bin$/i, offset: 0x0 },
   { re: /(partitions?|partition[-_]table).*\.bin$/i, offset: 0x8000 },
-  { re: /boot_app0.*\.bin$/i,                     offset: 0xe000 },
-  { re: /(firmware|bonsai|app)[^/]*\.bin$/i,      offset: 0x10000 },
+  { re: /boot_app0.*\.bin$/i, offset: 0xe000 },
+  { re: /(firmware|bonsai|app)[^/]*\.bin$/i, offset: 0x10000 },
 ];
-
-// A single image that already contains bootloader + table + app goes at 0.
 const MERGED_RE = /(merged|combined|factory|full)[^/]*\.bin$/i;
 
 const USB_NAMES = {
-  "303a": { name: "Espressif", devices: { "1001": "ESP32-S3 (native USB)", "0002": "ESP32-S2" } },
-  "10c4": { name: "Silicon Labs", devices: { ea60: "CP2102 USB bridge" } },
-  "1a86": { name: "WCH", devices: { "7523": "CH340 USB bridge", "55d4": "CH9102 USB bridge" } },
+  "303a": { name: "Espressif", devices: { "1001": "native USB", "0002": "ESP32-S2" } },
+  "10c4": { name: "Silicon Labs", devices: { ea60: "CP2102 adapter" } },
+  "1a86": { name: "WCH", devices: { "7523": "CH340 adapter", "55d4": "CH9102 adapter" } },
   "0403": { name: "FTDI", devices: {} },
   "2886": { name: "Seeed Studio", devices: {} },
 };
 
-/* --------------------------------------------------------------------------
- * Small DOM helpers.
- * ---------------------------------------------------------------------- */
-
 const $ = (id) => document.getElementById(id);
-const consoleEl = $("console");
-
-function log(text, cls) {
-  const line = document.createElement("span");
-  if (cls) line.className = cls;
-  line.textContent = text + "\n";
-  consoleEl.appendChild(line);
-  consoleEl.scrollTop = consoleEl.scrollHeight;
-}
-
-function clearConsole(first) {
-  consoleEl.textContent = "";
-  if (first) log(first, "accent");
-}
-
-function setField(id, value, cls) {
-  const el = $(id);
-  el.textContent = value;
-  el.className = cls || "";
-}
-
 const hex = (n) => "0x" + n.toString(16);
 
-function humanSize(bytes) {
+function size(bytes) {
   if (bytes < 1024) return bytes + " B";
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
   return (bytes / 1024 / 1024).toFixed(2) + " MB";
+}
+
+function log(text) {
+  const pre = $("log");
+  pre.textContent += text + "\n";
+  pre.scrollTop = pre.scrollHeight;
+}
+
+/* --------------------------------------------------------------------------
+ * Steps.
+ * ---------------------------------------------------------------------- */
+
+const STEP_NAMES = ["Board", "Version", "Write"];
+let step = 0;
+
+function goStep(n) {
+  step = n;
+  document.querySelectorAll(".step").forEach((el) => {
+    el.classList.toggle("active", Number(el.dataset.step) === n);
+  });
+  document.querySelectorAll(".rail li").forEach((li) => {
+    const i = Number(li.dataset.rail);
+    li.classList.toggle("current", i === n);
+    li.classList.toggle("done", i < n);
+  });
+  document.querySelectorAll(".mprog-track i").forEach((bar, i) => {
+    bar.classList.toggle("on", i <= n);
+  });
+  $("mprog-name").textContent = STEP_NAMES[n];
+  $("mprog-cur").textContent = String(n + 1);
+  window.scrollTo({ top: 0, behavior: "instant" });
 }
 
 /* --------------------------------------------------------------------------
  * Releases.
  * ---------------------------------------------------------------------- */
 
-let releases = [];      // as returned by the API, newest first
-let currentPlan = null; // { release, parts: [{name, offset, url, size}] }
+let releases = [];
+let selected = -1;
+let plan = null;
 
 async function loadReleases() {
-  const select = $("release");
-  const hint = $("releases-hint");
-
-  select.disabled = true;
-  select.innerHTML = "<option>Loading releases…</option>";
-  hint.className = "hint";
-  hint.textContent = `Reading ${REPO.owner}/${REPO.repo}…`;
+  const sub = $("releases-sub");
+  const list = $("releases");
+  selected = -1;
+  plan = null;
+  $("plan").hidden = true;
+  $("plan-title").hidden = true;
+  $("to-write").disabled = true;
+  list.innerHTML = "";
+  sub.textContent = "Reading the published releases.";
 
   let data;
   try {
@@ -115,173 +106,129 @@ async function loadReleases() {
     if (!res.ok) throw new Error(`GitHub answered ${res.status}`);
     data = await res.json();
   } catch (err) {
-    select.innerHTML = "<option>Release list unavailable</option>";
-    hint.className = "hint err";
-    hint.textContent = `Could not read the release list: ${err.message}.`;
-    updateFlashButton();
+    sub.textContent = `The release list could not be read: ${err.message}`;
     return;
   }
 
   releases = data.filter((r) => !r.draft);
-
   if (releases.length === 0) {
-    select.innerHTML = "<option>No releases published yet</option>";
-    hint.className = "hint warn";
-    hint.innerHTML =
-      `<b>${REPO.owner}/${REPO.repo}</b> has no published releases, so there is ` +
-      `nothing to flash yet. A release needs a <code>manifest.json</code>, a ` +
-      `merged image, or the usual <code>bootloader.bin</code> / ` +
-      `<code>partitions.bin</code> / <code>firmware.bin</code> set attached to it.`;
-    $("release-detail").hidden = true;
-    updateFlashButton();
+    sub.innerHTML =
+      `<b>${REPO.owner}/${REPO.repo}</b> has published no releases yet, so there ` +
+      `is nothing to write. Tag a commit and the build workflow will publish one.`;
     return;
   }
 
-  select.innerHTML = "";
+  sub.textContent = "The newest build is picked for you. Older ones still work.";
   releases.forEach((r, i) => {
-    const opt = document.createElement("option");
-    const date = r.published_at ? r.published_at.slice(0, 10) : "unpublished";
-    const marks = [];
-    if (i === 0 && !r.prerelease) marks.push("latest");
-    if (r.prerelease) marks.push("pre-release");
-    opt.value = String(i);
-    opt.textContent =
-      `${r.tag_name} — ${date}${marks.length ? "  [" + marks.join(", ") + "]" : ""}`;
-    select.appendChild(opt);
+    const date = r.published_at
+      ? new Date(r.published_at).toLocaleDateString(undefined, {
+          year: "numeric", month: "short", day: "numeric",
+        })
+      : "not published";
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "opt";
+    card.dataset.index = String(i);
+    card.innerHTML =
+      `<span class="radio"></span>` +
+      `<span class="opt-body">` +
+      `<span class="opt-name">${r.tag_name}</span>` +
+      `<span class="opt-meta">${date}</span>` +
+      `</span>` +
+      (r.prerelease
+        ? `<span class="tag tag-blue">pre-release</span>`
+        : i === 0
+        ? `<span class="tag tag-green">newest</span>`
+        : "");
+    card.addEventListener("click", () => select(i));
+    list.appendChild(card);
   });
-  select.disabled = false;
 
-  // The newest stable build is what almost everybody wants.
   const firstStable = releases.findIndex((r) => !r.prerelease);
-  select.value = String(firstStable === -1 ? 0 : firstStable);
-
-  hint.className = "hint";
-  hint.textContent = `${releases.length} release${releases.length === 1 ? "" : "s"} found.`;
-  await selectRelease();
+  select(firstStable === -1 ? 0 : firstStable);
 }
 
-async function selectRelease() {
-  const release = releases[Number($("release").value)];
-  const detail = $("release-detail");
-  const hint = $("releases-hint");
-  currentPlan = null;
+async function select(index) {
+  selected = index;
+  document.querySelectorAll(".opt").forEach((el) => {
+    el.classList.toggle("sel", Number(el.dataset.index) === index);
+  });
 
-  if (!release) {
-    detail.hidden = true;
-    updateFlashButton();
-    return;
-  }
+  const release = releases[index];
+  const table = $("plan");
+  $("plan-title").hidden = false;
+  table.hidden = false;
+  table.innerHTML = `<div class="srow"><span class="k">Reading</span>` +
+    `<span class="v">${release.tag_name}</span></div>`;
+  $("to-write").disabled = true;
 
-  detail.hidden = false;
-  setField("r-tag", release.tag_name);
-  setField(
-    "r-date",
-    release.published_at ? new Date(release.published_at).toLocaleString() : "—"
-  );
-  setField(
-    "r-channel",
-    release.prerelease ? "pre-release" : "stable",
-    release.prerelease ? "warn" : "ok"
-  );
-  $("r-notes").innerHTML = "";
-  const link = document.createElement("a");
-  link.href = release.html_url;
-  link.textContent = "release page";
-  link.target = "_blank";
-  link.rel = "noreferrer";
-  $("r-notes").appendChild(link);
-
-  const plan = $("plan");
-  plan.innerHTML = "<tr><td>…</td><td>reading assets</td><td></td></tr>";
-
-  let parts;
   try {
-    parts = await buildPlan(release);
+    plan = { release, parts: await buildPlan(release) };
   } catch (err) {
-    plan.innerHTML = "";
-    hint.className = "hint err";
-    hint.textContent = err.message;
-    updateFlashButton();
+    plan = null;
+    table.innerHTML =
+      `<div class="srow"><span class="k">Problem</span><span class="v">${err.message}</span></div>`;
     return;
   }
 
-  currentPlan = { release, parts };
-  plan.innerHTML = "";
-  for (const part of parts) {
-    const tr = document.createElement("tr");
-    tr.innerHTML =
-      `<td>${hex(part.offset)}</td><td>${part.name}</td>` +
-      `<td>${part.size ? humanSize(part.size) : ""}</td>`;
-    plan.appendChild(tr);
-  }
-
-  hint.className = "hint";
-  hint.textContent =
-    parts.length === 1
-      ? "One image, written at " + hex(parts[0].offset) + "."
-      : parts.length + " images to write.";
-  updateFlashButton();
+  table.innerHTML = plan.parts
+    .map(
+      (p) =>
+        `<div class="srow"><span class="k mono">${hex(p.offset)}</span>` +
+        `<span class="v mono">${p.name}</span>` +
+        `<span class="size">${p.size ? size(p.size) : ""}</span></div>`
+    )
+    .join("");
+  $("to-write").disabled = false;
 }
 
-// Works out what goes where for a release, preferring an explicit manifest.
+// Works out what goes where, preferring what the release states over guesswork.
 async function buildPlan(release) {
   const assets = release.assets || [];
   const manifest = assets.find((a) => /^manifest\.json$/i.test(a.name));
 
   if (manifest) {
     const res = await fetch(manifest.browser_download_url);
-    if (!res.ok) throw new Error(`Could not read manifest.json (${res.status}).`);
+    if (!res.ok) throw new Error(`manifest.json could not be read (${res.status}).`);
     const doc = await res.json();
     const builds = doc.builds || [];
-    if (builds.length === 0) throw new Error("manifest.json lists no builds.");
-    // Keep every build; the right one is picked once the chip is known.
-    const build =
-      builds.find((b) => /esp32-?s3/i.test(b.chipFamily || "")) || builds[0];
-    const parts = (build.parts || []).map((p) => {
-      const url = new URL(p.path, manifest.browser_download_url).href;
-      const asset = assets.find((a) => url.endsWith("/" + a.name));
-      return {
-        name: p.path.split("/").pop(),
-        offset: p.offset || 0,
-        url,
-        size: asset ? asset.size : 0,
-        chipFamily: build.chipFamily || null,
-      };
-    });
-    if (parts.length === 0) throw new Error("manifest.json lists no parts.");
-    return parts.sort((a, b) => a.offset - b.offset);
+    const build = builds.find((b) => /esp32-?s3/i.test(b.chipFamily || "")) || builds[0];
+    if (!build || !(build.parts || []).length) throw new Error("manifest.json lists no images.");
+    return build.parts
+      .map((p) => {
+        const url = new URL(p.path, manifest.browser_download_url).href;
+        const asset = assets.find((a) => url.endsWith("/" + a.name));
+        return {
+          name: p.path.split("/").pop(),
+          offset: p.offset || 0,
+          url,
+          size: asset ? asset.size : 0,
+          chipFamily: build.chipFamily || null,
+        };
+      })
+      .sort((a, b) => a.offset - b.offset);
   }
 
   const bins = assets.filter((a) => /\.bin$/i.test(a.name));
-  if (bins.length === 0) {
-    throw new Error(
-      `${release.tag_name} has no .bin assets and no manifest.json, so there is nothing to flash.`
-    );
-  }
-
   const merged = bins.find((a) => MERGED_RE.test(a.name));
   if (merged) {
-    return [
-      { name: merged.name, offset: 0x0, url: merged.browser_download_url, size: merged.size },
-    ];
+    return [{ name: merged.name, offset: 0x0, url: merged.browser_download_url, size: merged.size }];
   }
 
   const parts = [];
   for (const asset of bins) {
     const rule = PART_RULES.find((r) => r.re.test(asset.name));
-    if (!rule) continue;
-    parts.push({
-      name: asset.name,
-      offset: rule.offset,
-      url: asset.browser_download_url,
-      size: asset.size,
-    });
+    if (rule) {
+      parts.push({
+        name: asset.name,
+        offset: rule.offset,
+        url: asset.browser_download_url,
+        size: asset.size,
+      });
+    }
   }
   if (parts.length === 0) {
-    throw new Error(
-      `Could not tell where the assets of ${release.tag_name} belong. Attach a ` +
-        `manifest.json, or name them bootloader.bin / partitions.bin / firmware.bin.`
-    );
+    throw new Error(`${release.tag_name} has no firmware images attached to it.`);
   }
   return parts.sort((a, b) => a.offset - b.offset);
 }
@@ -295,19 +242,12 @@ let esploader = null;
 let busy = false;
 
 const terminal = {
-  clean: () => clearConsole(),
+  clean: () => { $("log").textContent = ""; },
   writeLine: (data) => log(String(data)),
   write: (data) => {
-    // esptool-js writes progress dots without newlines.
-    const text = String(data);
-    if (consoleEl.lastChild && !consoleEl.lastChild.textContent.endsWith("\n")) {
-      consoleEl.lastChild.textContent += text;
-    } else {
-      const span = document.createElement("span");
-      span.textContent = text;
-      consoleEl.appendChild(span);
-    }
-    consoleEl.scrollTop = consoleEl.scrollHeight;
+    const pre = $("log");
+    pre.textContent += String(data);
+    pre.scrollTop = pre.scrollHeight;
   },
 };
 
@@ -317,33 +257,16 @@ function describePort(port) {
   const vid = info.usbVendorId.toString(16).padStart(4, "0");
   const pid = (info.usbProductId ?? 0).toString(16).padStart(4, "0");
   const vendor = USB_NAMES[vid];
-  const name = vendor ? vendor.devices[pid] || vendor.name : "USB serial device";
-  return `${name} (${vid}:${pid})`;
-}
-
-async function refreshPorts() {
-  const list = $("ports");
-  if (!navigator.serial) return;
-  const ports = await navigator.serial.getPorts();
-  list.innerHTML = "";
-  if (ports.length === 0) {
-    list.innerHTML = '<li class="empty">No ports authorised for this site yet.</li>';
-    return;
-  }
-  ports.forEach((port, i) => {
-    const li = document.createElement("li");
-    const active = transport && transport.device === port;
-    li.innerHTML =
-      `<span class="tag">${active ? "*" : String(i)}</span>${describePort(port)}` +
-      (active ? " — in use" : "");
-    list.appendChild(li);
-  });
+  if (!vendor) return `USB serial device ${vid}:${pid}`;
+  const device = vendor.devices[pid];
+  return device ? `${vendor.name}, ${device}` : vendor.name;
 }
 
 async function connect() {
   if (busy) return;
   busy = true;
   $("connect").disabled = true;
+  $("connect").textContent = "Connecting";
 
   try {
     const device = await navigator.serial.requestPort();
@@ -356,208 +279,179 @@ async function connect() {
       debugLogging: false,
     });
 
-    clearConsole("Connecting to the board…");
-    setField("k-status", "connecting", "warn");
-
     const description = await esploader.main();
 
-    setField("k-status", "connected", "ok");
-    setField("k-chip", description);
-    setField("k-rev", esploader.chip.getChipRevision
-      ? String(await esploader.chip.getChipRevision(esploader))
-      : "—");
-    setField("k-features", (await esploader.chip.getChipFeatures(esploader)).join(", "));
-    setField("k-crystal", (await esploader.chip.getCrystalFreq(esploader)) + " MHz");
-    setField("k-mac", await esploader.chip.readMac(esploader));
-    setField("k-flash", await esploader.detectFlashSize());
-    setField("k-port", describePort(transport.device));
+    $("k-chip").textContent = description;
+    $("k-mac").textContent = await esploader.chip.readMac(esploader);
+    $("k-flash").textContent = await esploader.detectFlashSize();
+    $("k-port").textContent = describePort(device);
+    $("board-summary").hidden = false;
+    $("w-board").textContent = description;
 
     $("connect").hidden = true;
-    $("disconnect").hidden = false;
-    log("Board ready.", "ok");
+    $("to-versions").hidden = false;
+    $("tip").hidden = true;
   } catch (err) {
-    if (err && err.name === "NotFoundError") {
-      log("No port was picked.", "warn");
-    } else {
-      log("Connection failed: " + (err && err.message ? err.message : err), "err");
-      log(
-        "Hold BOOT, tap RESET, release BOOT to force the board into download mode, then connect again.",
-        "warn"
+    if (!err || err.name !== "NotFoundError") {
+      showError(
+        "The board did not answer: " + (err && err.message ? err.message : err) +
+          ". Hold BOOT, tap RESET, release BOOT and try again."
       );
-      setField("k-status", "not connected", "err");
     }
-    await cleanupTransport();
+    await release();
   } finally {
     busy = false;
-    $("connect").disabled = !navigator.serial;
-    await refreshPorts();
-    updateFlashButton();
+    $("connect").disabled = false;
+    $("connect").textContent = "Connect a board";
   }
 }
 
-async function cleanupTransport() {
+async function release() {
   if (transport) {
-    try { await transport.disconnect(); } catch { /* already gone */ }
+    try { await transport.disconnect(); } catch { /* the port is already gone */ }
   }
   transport = null;
   esploader = null;
-  $("connect").hidden = false;
-  $("connect").disabled = !navigator.serial;
-  $("disconnect").hidden = true;
-  ["k-chip", "k-rev", "k-features", "k-crystal", "k-mac", "k-flash", "k-port"]
-    .forEach((id) => setField(id, "—", "dim"));
-  updateFlashButton();
 }
 
-async function disconnect() {
-  await cleanupTransport();
-  setField("k-status", "not connected", "dim");
-  log("Disconnected.", "warn");
-  await refreshPorts();
+function showError(text) {
+  const box = $("unsupported");
+  box.textContent = text;
+  box.classList.add("show");
 }
 
 /* --------------------------------------------------------------------------
- * Flashing.
+ * Writing.
  * ---------------------------------------------------------------------- */
 
-function updateFlashButton() {
-  $("flash").disabled = busy || !esploader || !currentPlan;
-}
-
-async function download(part, index, total) {
-  log(`Downloading ${part.name} (${index + 1}/${total})…`);
-  const res = await fetch(part.url);
-  if (!res.ok) throw new Error(`${part.name}: download failed (${res.status})`);
-  const data = new Uint8Array(await res.arrayBuffer());
-  log(`  ${part.name}: ${humanSize(data.length)} to ${hex(part.offset)}`);
-  return { data, address: part.offset };
-}
-
 async function flash() {
-  if (busy || !esploader || !currentPlan) return;
+  if (busy || !esploader || !plan) return;
 
-  const { release, parts } = currentPlan;
-  const family = parts.find((p) => p.chipFamily)?.chipFamily;
+  const family = plan.parts.find((p) => p.chipFamily)?.chipFamily;
   const chipName = esploader.chip.CHIP_NAME;
-  if (family && family.replace(/-/g, "").toLowerCase() !== chipName.replace(/-/g, "").toLowerCase()) {
+  const same = (a, b) => a.replace(/-/g, "").toLowerCase() === b.replace(/-/g, "").toLowerCase();
+  if (family && !same(family, chipName)) {
     const go = confirm(
-      `This release is built for ${family} but the connected board is a ${chipName}.\n\n` +
-        `Flashing it will almost certainly brick the board until it is reflashed. Continue anyway?`
+      `This build is for ${family} and the connected board is a ${chipName}. ` +
+        `Writing it will leave the board unusable until it is flashed again. Continue?`
     );
     if (!go) return;
   }
 
   busy = true;
-  updateFlashButton();
-  $("connect").disabled = true;
-  $("disconnect").disabled = true;
-  $("release").disabled = true;
-
-  const progress = $("progress");
-  const bar = $("bar");
-  progress.hidden = false;
-  bar.style.width = "0%";
+  $("flash").disabled = true;
+  $("back-version").disabled = true;
+  $("outcome").hidden = true;
+  $("progress").hidden = false;
+  $("bar").style.width = "0%";
+  $("logbox").open = false;
+  $("log").textContent = "";
 
   try {
-    log(`--- flashing ${release.tag_name} ---`, "accent");
-
     const fileArray = [];
-    for (let i = 0; i < parts.length; i++) {
-      fileArray.push(await download(parts[i], i, parts.length));
+    let done = 0;
+    const offsets = [];
+    for (const part of plan.parts) {
+      $("progress-label").textContent = `Downloading ${part.name}`;
+      const res = await fetch(part.url);
+      if (!res.ok) throw new Error(`${part.name} could not be downloaded (${res.status})`);
+      const data = new Uint8Array(await res.arrayBuffer());
+      log(`${part.name}: ${size(data.length)} for ${hex(part.offset)}`);
+      offsets.push(done);
+      done += data.length;
+      fileArray.push({ data, address: part.offset });
     }
-
-    const totalBytes = fileArray.reduce((sum, f) => sum + f.data.length, 0);
-    const doneBefore = [];
-    let running = 0;
-    for (const f of fileArray) {
-      doneBefore.push(running);
-      running += f.data.length;
-    }
-
-    if ($("erase").checked) log("Erasing the whole flash first…", "warn");
+    const total = done;
 
     await esploader.writeFlash({
       fileArray,
       flashSize: "keep",
       flashMode: "keep",
       flashFreq: "keep",
-      eraseAll: $("erase").checked,
+      eraseAll: false,
       compress: true,
-      reportProgress: (fileIndex, written, total) => {
-        const overall = (doneBefore[fileIndex] + written) / totalBytes;
-        bar.style.width = (overall * 100).toFixed(1) + "%";
+      reportProgress: (fileIndex, written, fileTotal) => {
+        const overall = (offsets[fileIndex] + written) / total;
+        $("bar").style.width = (overall * 100).toFixed(1) + "%";
         $("progress-label").textContent =
-          `${parts[fileIndex].name}: ${Math.round((written / total) * 100)}%` +
-          `  ·  ${Math.round(overall * 100)}% overall`;
+          `Writing ${plan.parts[fileIndex].name}, ` +
+          `${Math.round((written / fileTotal) * 100)} percent of it, ` +
+          `${Math.round(overall * 100)} percent overall`;
       },
     });
 
-    bar.style.width = "100%";
-    $("progress-label").textContent = "Done.";
-    log(`--- ${release.tag_name} written ---`, "ok");
+    $("bar").style.width = "100%";
+    $("progress-label").textContent = "Written.";
 
-    // The XIAO's native USB port has no RTS line to pulse: esptool-js needs to
-    // be told so it resets the chip the USB-OTG way instead.
+    // The XIAO answers over its own USB port, which has no RTS line to pulse,
+    // so esptool-js has to reset it the USB-OTG way instead.
     const info = transport.device.getInfo ? transport.device.getInfo() : {};
     await esploader.after("hard_reset", info.usbVendorId === 0x303a);
-    log("Board reset. Open a serial monitor at 115200 baud and type \"help\".", "ok");
 
-    // The stub is gone after the reset, so the session has to be re-opened.
-    await cleanupTransport();
-    setField("k-status", "flashed, disconnected", "ok");
-    await refreshPorts();
+    // The flasher stub is gone after the reset, so the session ends with it.
+    await release();
+    outcome(
+      true,
+      `${plan.release.tag_name} is on the board`,
+      "The board has restarted. Open its setup page to give it a network, or " +
+        "hold the button if it is already configured."
+    );
+    $("flash").hidden = true;
+    $("back-version").hidden = true;
   } catch (err) {
-    log("Flashing failed: " + (err && err.message ? err.message : err), "err");
-    $("progress-label").textContent = "Failed.";
+    $("progress-label").textContent = "Stopped.";
+    outcome(
+      false,
+      "The write did not finish",
+      (err && err.message ? err.message : String(err)) +
+        ". The board keeps the firmware it had. Open Details for the full log."
+    );
+    $("logbox").open = true;
   } finally {
     busy = false;
-    $("connect").disabled = !navigator.serial;
-    $("disconnect").disabled = false;
-    $("release").disabled = releases.length === 0;
-    updateFlashButton();
+    $("flash").disabled = false;
+    $("back-version").disabled = false;
   }
+}
+
+function outcome(ok, title, text) {
+  const badge = $("outcome-badge");
+  badge.className = "badge " + (ok ? "ok" : "err");
+  badge.innerHTML = ok
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+         stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>`
+    : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+         stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>`;
+  $("outcome-title").textContent = title;
+  $("outcome-text").textContent = text;
+  $("outcome").hidden = false;
 }
 
 /* --------------------------------------------------------------------------
  * Start-up.
  * ---------------------------------------------------------------------- */
 
-function checkSupport() {
-  const line = $("support-line");
-  if (navigator.serial) {
-    line.className = "hint";
-    line.innerHTML =
-      "Web Serial is available in this browser. Nothing to install.";
-    $("connect").disabled = false;
-    return true;
-  }
-  line.className = "hint err";
-  line.innerHTML =
-    "This browser has no Web Serial API, so it cannot talk to the board. " +
-    "Use Chrome, Edge or Opera on a desktop &mdash; Firefox, Safari and mobile browsers do not support it.";
+$("repo-link").href = `https://github.com/${REPO.owner}/${REPO.repo}`;
+
+if (!navigator.serial) {
+  $("unsupported").classList.add("show");
   $("connect").disabled = true;
-  $("devices-hint").hidden = true;
-  return false;
 }
 
-function wireLinks() {
-  const base = `https://github.com/${REPO.owner}/${REPO.repo}`;
-  $("repo-link").href = base;
-  $("releases-link").href = base + "/releases";
-}
-
-wireLinks();
-const supported = checkSupport();
-clearConsole(supported ? "Ready. Connect a board to begin." : "Web Serial is not available here.");
+goStep(0);
 loadReleases();
-if (supported) {
-  refreshPorts();
-  navigator.serial.addEventListener("connect", refreshPorts);
-  navigator.serial.addEventListener("disconnect", refreshPorts);
-}
 
 $("connect").addEventListener("click", connect);
-$("disconnect").addEventListener("click", disconnect);
+$("to-versions").addEventListener("click", () => goStep(1));
+$("back-board").addEventListener("click", () => goStep(0));
+$("to-write").addEventListener("click", () => {
+  $("w-version").textContent = plan.release.tag_name;
+  $("w-images").textContent =
+    plan.parts.length === 1
+      ? `one image at ${hex(plan.parts[0].offset)}`
+      : `${plan.parts.length} images, ${size(plan.parts.reduce((s, p) => s + p.size, 0))} in total`;
+  goStep(2);
+});
+$("back-version").addEventListener("click", () => goStep(1));
 $("reload").addEventListener("click", loadReleases);
-$("release").addEventListener("change", selectRelease);
 $("flash").addEventListener("click", flash);

@@ -3,129 +3,145 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bonsai Web Flasher</title>
-<meta name="description" content="Flash the latest Bonsai firmware release to a Bonsai board over USB, straight from the browser.">
+<title>Flash Bonsai</title>
+<meta name="description" content="Write the latest Bonsai firmware release to a board over USB, from the browser.">
 <link rel="icon" href="assets/bonsai-mark.png">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
-<header class="top">
-  <a class="brand" href="./">
-    <img src="assets/bonsai-mark.png" alt="">
-    <span>bonsai <em>flasher</em></span>
-  </a>
-  <nav>
+<div class="shell">
+
+  <div class="topbar">
+    <img class="logo" src="assets/bonsai-logo-light.png" alt="Bonsai">
+    <span class="topbar-page">Firmware</span>
+    <span class="spacer"></span>
     <a href="https://github.com/devvazquez/bonsai" id="repo-link">Repository</a>
-    <a href="https://github.com/devvazquez/bonsai/releases" id="releases-link">Releases</a>
-  </nav>
-</header>
-
-<main>
-
-  <section class="intro">
-    <h1>Flash a board from the browser</h1>
-    <p>
-      Plug a Bonsai board (Seeed XIAO ESP32-S3 Sense) into a USB port, pick a firmware
-      release and write it. Nothing is uploaded anywhere: the release is downloaded from
-      GitHub and pushed over the serial port by your own browser.
-    </p>
-    <p class="hint" id="support-line">Checking browser support&hellip;</p>
-  </section>
-
-  <div class="columns">
-
-    <!-- ---------------------------------------------------------------- -->
-    <section class="panel" id="devices-panel">
-      <h2>devices</h2>
-
-      <div class="row">
-        <button id="connect" class="primary" disabled>Connect a board</button>
-        <button id="disconnect" class="ghost" hidden>Disconnect</button>
-      </div>
-
-      <p class="hint" id="devices-hint">
-        The board shows up as a serial port. If nothing appears in the browser
-        prompt, hold <b>BOOT</b>, tap <b>RESET</b>, release <b>BOOT</b>, then try again.
-      </p>
-
-      <h3>connected</h3>
-      <dl class="kv" id="chip-info">
-        <div><dt>status</dt><dd id="k-status">not connected</dd></div>
-        <div><dt>chip</dt><dd id="k-chip">&mdash;</dd></div>
-        <div><dt>revision</dt><dd id="k-rev">&mdash;</dd></div>
-        <div><dt>features</dt><dd id="k-features">&mdash;</dd></div>
-        <div><dt>crystal</dt><dd id="k-crystal">&mdash;</dd></div>
-        <div><dt>MAC</dt><dd id="k-mac">&mdash;</dd></div>
-        <div><dt>flash</dt><dd id="k-flash">&mdash;</dd></div>
-        <div><dt>port</dt><dd id="k-port">&mdash;</dd></div>
-      </dl>
-
-      <h3>known ports</h3>
-      <ul class="ports" id="ports"><li class="empty">No ports authorised for this site yet.</li></ul>
-    </section>
-
-    <!-- ---------------------------------------------------------------- -->
-    <section class="panel" id="versions-panel">
-      <h2>versions</h2>
-
-      <div class="row">
-        <select id="release" disabled><option>Loading releases&hellip;</option></select>
-        <button id="reload" class="ghost" title="Re-read the release list">Refresh</button>
-      </div>
-
-      <div id="release-detail" class="detail" hidden>
-        <dl class="kv">
-          <div><dt>tag</dt><dd id="r-tag">&mdash;</dd></div>
-          <div><dt>published</dt><dd id="r-date">&mdash;</dd></div>
-          <div><dt>channel</dt><dd id="r-channel">&mdash;</dd></div>
-          <div><dt>notes</dt><dd id="r-notes">&mdash;</dd></div>
-        </dl>
-        <h3>flash plan</h3>
-        <table class="plan"><tbody id="plan"></tbody></table>
-      </div>
-
-      <p class="hint" id="releases-hint"></p>
-
-      <div class="row options">
-        <label>
-      <input type="checkbox" id="erase">
-      <span>Erase the whole flash first &mdash; wipes <code>/config.json</code>, so the
-      Wi-Fi list and the language have to be set again over the serial console.</span>
-    </label>
-      </div>
-
-      <div class="row">
-        <button id="flash" class="primary" disabled>Flash this release</button>
-      </div>
-
-      <div class="progress" id="progress" hidden>
-        <div class="bar"><span id="bar"></span></div>
-        <p class="hint" id="progress-label"></p>
-      </div>
-    </section>
-
   </div>
 
-  <!-- ------------------------------------------------------------------ -->
-  <section class="panel console-panel">
-    <h2>console</h2>
-    <pre id="console" class="console" aria-live="polite">Waiting for a board.</pre>
-    <p class="hint">
-      After flashing, open a serial monitor at 115200 baud and type <code>help</code>:
-      the firmware is configured from that console.
-    </p>
-  </section>
+  <div class="layout">
 
-</main>
+    <nav class="rail" aria-label="Steps">
+      <ol>
+        <li data-rail="0"><span class="num"><span>01</span></span> Board</li>
+        <li data-rail="1"><span class="num"><span>02</span></span> Version</li>
+        <li data-rail="2"><span class="num"><span>03</span></span> Write</li>
+      </ol>
+    </nav>
 
-<footer>
-  <p>
-    Bonsai &mdash; <a href="https://github.com/devvazquez/bonsai">devvazquez/bonsai</a>.
-    Flashing runs on <a href="https://github.com/espressif/esptool-js">esptool-js</a>
-    over the Web Serial API.
+    <main class="panel">
+
+      <div class="mprog">
+        <div class="mprog-track"><i></i><i></i><i></i></div>
+        <div class="mprog-meta">
+          <span id="mprog-name">Board</span>
+          <span><b id="mprog-cur">1</b> / 3</span>
+        </div>
+      </div>
+
+      <div class="errbox" id="unsupported">
+        This browser cannot talk to a board: it has no Web Serial support.
+        Chrome, Edge or Opera on a computer will work.
+      </div>
+
+      <!-- ============ 0 · BOARD ============ -->
+      <section class="step active" data-step="0">
+        <h1>Flash a Bonsai board</h1>
+        <p class="sub">
+          Connect the board over USB and this page writes a published firmware
+          release to it. The files go from GitHub to the board through your
+          browser, and nowhere else.
+        </p>
+
+        <div class="tip" id="tip">
+          <b>If the board does not appear</b>
+          <p>Hold BOOT, tap RESET, then release BOOT. That puts the board in
+          download mode and it shows up as a serial port.</p>
+        </div>
+
+        <div class="summary" id="board-summary" hidden>
+          <div class="srow"><span class="k">Chip</span><span class="v" id="k-chip"></span></div>
+          <div class="srow"><span class="k">MAC</span><span class="v"><span class="mono" id="k-mac"></span></span></div>
+          <div class="srow"><span class="k">Flash</span><span class="v" id="k-flash"></span></div>
+          <div class="srow"><span class="k">Port</span><span class="v" id="k-port"></span></div>
+        </div>
+
+        <div class="actions">
+          <button class="btn btn-primary" id="connect">Connect a board</button>
+          <button class="btn btn-primary" id="to-versions" hidden>Choose a version</button>
+          <span class="spacer"></span>
+        </div>
+      </section>
+
+      <!-- ============ 1 · VERSION ============ -->
+      <section class="step" data-step="1">
+        <h1>Pick a version</h1>
+        <p class="sub" id="releases-sub">Reading the published releases.</p>
+
+        <div class="opts" id="releases"></div>
+
+        <h2 id="plan-title" hidden>What gets written</h2>
+        <div class="summary" id="plan" hidden></div>
+
+        <div class="actions">
+          <button class="btn btn-primary" id="to-write" disabled>Continue</button>
+          <button class="btn btn-secondary" id="back-board">Back</button>
+          <span class="spacer"></span>
+          <button class="btn btn-quiet" id="reload">Reload releases</button>
+        </div>
+      </section>
+
+      <!-- ============ 2 · WRITE ============ -->
+      <section class="step" data-step="2">
+        <h1>Write the firmware</h1>
+        <p class="sub">
+          This takes about half a minute. Leave the board plugged in until it
+          finishes.
+        </p>
+
+        <div class="summary">
+          <div class="srow"><span class="k">Board</span><span class="v" id="w-board"></span></div>
+          <div class="srow"><span class="k">Version</span><span class="v" id="w-version"></span></div>
+          <div class="srow"><span class="k">Images</span><span class="v" id="w-images"></span></div>
+        </div>
+
+        <div class="progress" id="progress" hidden>
+          <div class="bar"><span id="bar"></span></div>
+          <p class="progress-label" id="progress-label"></p>
+        </div>
+
+        <details class="logbox" id="logbox">
+          <summary>Details</summary>
+          <pre id="log"></pre>
+        </details>
+
+        <div class="center" id="outcome" hidden>
+          <div class="badge ok" id="outcome-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5"></path>
+            </svg>
+          </div>
+          <div class="t" id="outcome-title"></div>
+          <div class="d" id="outcome-text"></div>
+        </div>
+
+        <div class="actions">
+          <button class="btn btn-primary" id="flash">Write it</button>
+          <button class="btn btn-secondary" id="back-version">Back</button>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <p class="foot">
+    Writing runs on <a href="https://github.com/espressif/esptool-js">esptool-js</a>
+    over the Web Serial API. Your settings live on the SD card, so a new
+    firmware build leaves them alone.
   </p>
-</footer>
+
+</div>
 
 <script type="module" src="app.js"></script>
 </body>

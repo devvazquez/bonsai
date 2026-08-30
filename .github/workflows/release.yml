@@ -1,0 +1,135 @@
+name: Build and publish firmware
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and publish (created if missing)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    env:
+      PIO_ENV: seeed_xiao_esp32s3
+      PROJECT: src/firmware/bonsai-firmware
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The platform toolchain is a slow download; keep it between runs.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: pio-${{ runner.os }}-${{ hashFiles('src/firmware/bonsai-firmware/platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build
+        run: pio run -d "$PROJECT" -e "$PIO_ENV"
+
+      - name: Collect the images
+        run: |
+          set -euo pipefail
+          build="$PROJECT/.pio/build/$PIO_ENV"
+          mkdir -p dist
+
+          cp "$build/firmware.bin"   dist/firmware.bin
+          cp "$build/bootloader.bin" dist/bootloader.bin
+          cp "$build/partitions.bin" dist/partitions.bin
+
+          # boot_app0 marks the OTA slot to boot from. It ships with the Arduino
+          # framework rather than being built, so it is copied out of the package.
+          boot_app0=$(find ~/.platformio/packages -name boot_app0.bin -print -quit)
+          test -n "$boot_app0"
+          cp "$boot_app0" dist/boot_app0.bin
+
+          ls -l dist
+
+      - name: Write the manifest
+        run: |
+          set -euo pipefail
+          # Offsets for the ESP32-S3: the bootloader sits at 0 on this chip, not
+          # at 0x1000 as on the original ESP32. The web flasher reads this file
+          # instead of guessing from asset names.
+          cat > dist/manifest.json <<JSON
+          {
+            "name": "Bonsai",
+            "version": "${TAG#v}",
+            "new_install_prompt_erase": false,
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [
+                  { "path": "bootloader.bin", "offset": 0 },
+                  { "path": "partitions.bin", "offset": 32768 },
+                  { "path": "boot_app0.bin",  "offset": 57344 },
+                  { "path": "firmware.bin",   "offset": 65536 }
+                ]
+              }
+            ]
+          }
+          JSON
+          python3 -c "import json;json.load(open('dist/manifest.json'))"
+
+      - name: Merge the images into one file
+        run: |
+          set -euo pipefail
+          # A single image for people flashing from a terminal:
+          #   esptool.py write_flash 0x0 bonsai-merged.bin
+          pip install "esptool<5"
+          python -m esptool --chip esp32s3 merge_bin -o dist/bonsai-merged.bin \
+            --flash_mode keep --flash_freq keep --flash_size keep \
+            0x0 dist/bootloader.bin \
+            0x8000 dist/partitions.bin \
+            0xe000 dist/boot_app0.bin \
+            0x10000 dist/firmware.bin
+
+      - name: Tag the commit when the run was started by hand
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes=$(mktemp)
+          {
+            echo "Flash this build from the browser at https://${GITHUB_REPOSITORY%%/*}.github.io/${GITHUB_REPOSITORY#*/}/"
+            echo
+            echo "Or from a terminal:"
+            echo
+            echo '```'
+            echo "esptool.py --chip esp32s3 write_flash 0x0 bonsai-merged.bin"
+            echo '```'
+          } > "$notes"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "$TAG" \
+              --notes-file "$notes" \
+              --generate-notes
+          fi
