@@ -14,13 +14,26 @@ namespace {
 // carries the same block behind the same PID check.
 constexpr int kOv3660Vflip      = 1;
 constexpr int kOv3660Hmirror    = 0;
-constexpr int kOv3660Saturation = -2;   // stock colours are overcooked
 
-// The example pairs the above with brightness +1, which is a recipe for dark
-// rooms. Measured on this hardware it is the wrong default: indoors under a
-// ceiling light it clips walls and desks to pure 255, and a clipped region has
-// no detail left for the model to read.
-constexpr int kOv3660Brightness = 0;
+// Raised from -2, which carried the note "stock colours are overcooked", to
+// match a live tune done against the sensor's own web preview. The preview wins
+// on a judgement like this — someone was looking at the picture — but the note
+// it replaces was not wrong either, so if descriptions start mentioning
+// implausibly vivid colours this is the line.
+constexpr int kOv3660Saturation = 3;
+
+// +1 from the live tune, and this one is worth reading before trusting it.
+//
+// The note that stood here recorded a measurement on this hardware: indoors
+// under a ceiling light, brightness +1 clips walls and desks to pure 255, and a
+// clipped region has no detail left for the model to read. That is a finding
+// about feeding a vision model, which is not the same question as what looks
+// right in a preview — a preview is judged by eye, and an eye likes a brighter
+// picture. Both can be true at once.
+//
+// Applied as asked, but this is the first line to put back to 0 if the
+// descriptions start missing things in bright parts of the room.
+constexpr int kOv3660Brightness = 1;
 
 // Which is also why the exposure bias is negative rather than the brightness.
 // Brightness is an offset applied after the exposure has been chosen, so it
@@ -28,6 +41,13 @@ constexpr int kOv3660Brightness = 0;
 // level moves the target the auto-exposure aims at, so the highlight never
 // clips. Biased dark deliberately: detail survives in shadows, not in white.
 constexpr int kOv3660AeLevel = -1;
+
+// The rest of the live tune. Read off slider positions in a screenshot, so
+// these are the sensor's own scales but the values are estimates to within a
+// step — the switches above are unambiguous, these are not.
+constexpr int kOv3660Contrast  = 1;   // -3..3, a touch right of centre
+constexpr int kOv3660Sharpness = 0;   // -3..3, centred
+constexpr int kOv3660Denoise   = 0;   // 0..8, hard left, which the UI calls Auto
 
 // The OV3660 pushes more pixels than the OV2640 and, with a single buffer, the
 // DMA has nowhere to write the next frame while the JPEG encoder is still on
@@ -114,7 +134,29 @@ void Camera::_applySensorTuning() {
     s->set_saturation(s, kOv3660Saturation);
     s->set_brightness(s, kOv3660Brightness);
     s->set_ae_level(s, kOv3660AeLevel);
-    Serial.println("Camera sensor OV3660: flipped upright, exposure biased down.");
+    s->set_contrast(s, kOv3660Contrast);
+    s->set_sharpness(s, kOv3660Sharpness);
+    s->set_denoise(s, kOv3660Denoise);
+
+    // The switches, all as read off the web preview. These are the settings the
+    // sensor's own defaults mostly already agree with, set explicitly so the
+    // picture does not depend on what the driver happened to leave behind.
+    s->set_whitebal(s, 1);        // AWB
+    s->set_awb_gain(s, 0);        // Advanced AWB off
+    s->set_wb_mode(s, 0);         // Manual AWB off, so AWB is free to work
+    s->set_exposure_ctrl(s, 1);   // AEC
+    s->set_gain_ctrl(s, 1);       // AGC
+    s->set_raw_gma(s, 1);         // GMA
+    s->set_lenc(s, 1);            // lens correction
+    s->set_bpc(s, 1);             // black pixel correction
+    s->set_wpc(s, 1);             // white pixel correction
+    s->set_special_effect(s, 0);  // no effect
+    s->set_colorbar(s, 0);        // not the test pattern
+
+    Serial.printf("Camera sensor OV3660: vflip, sat %d, bri %d, con %d, "
+                  "sharp %d, denoise %d, ae %d, AWB/AEC/AGC/GMA/LENC on\n",
+                  kOv3660Saturation, kOv3660Brightness, kOv3660Contrast,
+                  kOv3660Sharpness, kOv3660Denoise, kOv3660AeLevel);
 }
 
 void Camera::end() {

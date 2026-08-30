@@ -85,6 +85,13 @@ public:
     // Plays a default clip in the current language, if it is on the SD card.
     bool playDefault(DefaultAudios audio);
 
+    // A plain sine out of the speaker. Synthesised, so it needs nothing on the
+    // card and nothing from the backend — which is the whole point: the long
+    // press that opens the setup access point has to be able to acknowledge
+    // itself on a board with no clips downloaded yet, or no card at all.
+    // Blocks for `ms` and takes GPIO8 for that long, so no SD access meanwhile.
+    bool beep(uint32_t freqHz, uint32_t ms);
+
     bool isPlaying() const { return _playingAudio; }
 
     // Downloads every clip that is not on the SD card yet, to
@@ -119,6 +126,14 @@ private:
     void        _playerLoop();
 
     StreamBufferHandle_t _ring    = nullptr;   // network -> player
+
+    // The ring's storage lives in PSRAM, so growing it to hold a two second
+    // prebuffer does not come out of the internal heap that WiFi and TLS need.
+    // Only the small control block is internal. Legal because both ends of this
+    // buffer are tasks — PSRAM must not be touched from an ISR, and nothing here
+    // does.
+    StaticStreamBuffer_t _ringCtl{};
+    uint8_t*             _ringStore = nullptr;
     TaskHandle_t         _player  = nullptr;
     SemaphoreHandle_t    _drained = nullptr;   // player says the ring is empty
     volatile bool        _ending  = false;

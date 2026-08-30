@@ -34,21 +34,34 @@ constexpr size_t kBufferSamples = 512;
 // 8 MB free.
 constexpr size_t kMaxClipBytes = 4 * 1024 * 1024;
 
-// The jitter buffer between the socket and the DMA: four seconds at 8 kHz.
-// It only needs to be big enough to hold the prebuffer plus whatever arrives
-// while a burst is being spoken.
+// The jitter buffer between the socket and the DMA: four seconds at the 8 kHz
+// the streaming path asks for. It holds the prebuffer plus whatever arrives
+// while that is being spoken, and 64 KB against a 6.4 KB prebuffer is room to
+// spare. It was briefly 128 KB, sized from a 16 kHz figure that this path never
+// uses.
+//
+// It lives in PSRAM regardless. See _ringStore in Audio.h.
 constexpr size_t   kRingBytes           = 64 * 1024;
 
 // How long to collect before the first sound, as a fraction of real time rather
 // than a byte count, so it means the same thing at 8 kHz and at 16.
 //
-// This is the one number that trades latency for not stuttering. The link
-// measured 21-30 KB/s against the 16 KB/s that 8 kHz consumes, so it is ahead
-// on average but only by a little, and TLS delivers in records rather than
-// evenly — a gap of a few hundred ms is normal and has to be absorbed here or
-// it is audible.
-constexpr uint32_t kPrebufferMs         = 1000;
-constexpr uint32_t kPrebufferTimeoutMs  = 2500;
+// The one number that trades latency for not stuttering, and it is paid in full
+// on every answer, after the capture and the round trip are already spent. So it
+// is kept as small as the link allows.
+//
+// What the link allows is known. _look() asks for 8 kHz when streaming, which
+// consumes 16 KB/s, and this connection measures 21-30 KB/s: delivery runs ahead
+// of playback by 5 to 14 KB/s. The buffer is therefore absorbing the unevenness
+// of TLS records, not covering a shortfall, and a few hundred milliseconds is
+// the size of the gaps that produces. 400 ms is 6.4 KB, refilled by the surplus
+// in well under a second.
+//
+// An earlier note here said the link was behind playback. That was the 16 kHz
+// arithmetic, and 16 kHz is only ever used for the file path, which buffers the
+// whole clip and never comes through here.
+constexpr uint32_t kPrebufferMs         = 400;
+constexpr uint32_t kPrebufferTimeoutMs  = 2000;
 
 // Silence pushed after the last sample so the DMA plays out what it is still
 // holding before the amplifier is cut. The default I2S config holds about
@@ -226,20 +239,43 @@ void Audio::_playerLoop() {
             vTaskDelay(pdMS_TO_TICKS(5));
         }
 
+        // On the record, because it is latency the caller cannot otherwise
+        // see: look() stamps its "first sample" when the first byte lands, and
+        // the first *sound* is this much later.
+        Serial.printf("  [t] prebuffer: %u ms for %u of %u bytes\n",
+                      (unsigned)(millis() - tWait),
+                      (unsigned)xStreamBufferBytesAvailable(_ring),
+                      (unsigned)target);
+
         _underruns = 0;
         _played    = 0;
 
         for (;;) {
+            // 20 ms and not 100: this is how long the DMA is left unfed when
+            // there is nothing to send, and it has to stay well inside what the
+            // DMA holds.
             const size_t got = xStreamBufferReceive(_ring, mono, sizeof(mono),
-                                                    pdMS_TO_TICKS(100));
+                                                    pdMS_TO_TICKS(20));
             if (got == 0) {
                 // Nothing waiting: either the sentence is over, or the network
                 // is behind and the DMA is about to run dry anyway.
                 if (_ending && xStreamBufferBytesAvailable(_ring) == 0) break;
+
                 // Wanted samples and had none: that is a hole in the audio, and
                 // counting them is the only way to tell a smooth stream from a
                 // choppy one without standing next to the speaker.
                 ++_underruns;
+
+                // Silence, not nothing, and this is the whole point. The TX DMA
+                // is circular: starve it and the hardware sends its last buffer
+                // again, and again, which is heard as the previous fragment
+                // stuttering — a word that repeats or clips. Feeding it zeros
+                // renders a hole in the network as a short gap instead, which is
+                // both honest and far less objectionable.
+                memset(stereo, 0, sizeof(stereo));
+                size_t quiet = 0;
+                i2s_channel_write(_tx, stereo, sizeof(stereo), &quiet,
+                                  portMAX_DELAY);
                 continue;
             }
             _played += got;
@@ -269,9 +305,22 @@ bool Audio::beginStream(uint32_t sampleRate) {
     if (sampleRate == 0) sampleRate = kStartRate;
 
     if (!_ring) {
-        _ring = xStreamBufferCreate(kRingBytes, 1);
+        // PSRAM, and static rather than xStreamBufferCreate: 128 KB out of the
+        // internal heap is 128 KB WiFi and TLS do not get, on a chip with 320 KB
+        // of it and 8 MB of PSRAM going spare. FreeRTOS wants one spare byte in
+        // the storage area beyond the buffer's capacity.
+        if (!_ringStore) {
+            _ringStore = (uint8_t*)heap_caps_malloc(kRingBytes + 1,
+                                                    MALLOC_CAP_SPIRAM);
+        }
+        if (!_ringStore) {
+            Serial.printf("No PSRAM for a %u byte audio buffer\n",
+                          (unsigned)kRingBytes);
+            return false;
+        }
+        _ring = xStreamBufferCreateStatic(kRingBytes, 1, _ringStore, &_ringCtl);
         if (!_ring) {
-            Serial.printf("No memory for a %u byte audio buffer\n", kRingBytes);
+            Serial.println("Could not create the audio ring buffer");
             return false;
         }
     }
@@ -357,10 +406,83 @@ void Audio::endStream() {
     _hasCarry     = false;
     _ending       = false;
 
-    Serial.printf("  [t] audio: %u KB played at %u Hz (%u ms), %u underruns\n",
+    // Underruns in milliseconds of silence inserted, not as a bare count: each
+    // one is a 20 ms hole, and "12" means nothing next to "240 ms of gaps".
+    Serial.printf("  [t] audio: %u KB played at %u Hz (%u ms), %u underruns "
+                  "(~%u ms of gaps)\n",
                   (unsigned)(_played / 1024), _streamRate,
                   _streamRate ? (unsigned)(_played * 1000 / (_streamRate * 2)) : 0u,
-                  _underruns);
+                  _underruns, (unsigned)(_underruns * 20));
+}
+
+bool Audio::beep(uint32_t freqHz, uint32_t ms) {
+    if (!_tx) {
+        Serial.println("Audio::begin() has not run");
+        return false;
+    }
+    // A clip or a stream already owns GPIO8. Cutting in would take the pin from
+    // under it and leave the amplifier enabled by two callers at once.
+    if (_playingAudio) return false;
+    if (freqHz == 0 || ms == 0) return false;
+
+    constexpr uint32_t kBeepRate = 16000;
+    // A quarter of full scale. This goes to a 3 W amplifier two centimetres from
+    // someone's ear, and a confirmation tone has no business being the loudest
+    // thing the board can do.
+    constexpr float    kBeepPeak = 8000.0f;
+
+    i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(kBeepRate);
+    i2s_channel_disable(_tx);
+    i2s_channel_reconfig_std_clock(_tx, &clk_cfg);
+    i2s_channel_enable(_tx);
+
+    _playingAudio = true;
+    ampTake();
+
+    const uint32_t total = (uint32_t)((uint64_t)kBeepRate * ms / 1000);
+    // 4 ms of ramp at each end. Starting a sine at full amplitude steps the cone
+    // instantly and that is heard as a click in front of the tone, which rather
+    // undoes the point of a clean acknowledgement.
+    const uint32_t ramp = min<uint32_t>(kBeepRate / 250, total / 2);
+
+    int16_t output[kBufferSamples * 2];
+
+    for (uint32_t done = 0; done < total; done += kBufferSamples) {
+        const uint32_t samples = min<uint32_t>(kBufferSamples, total - done);
+
+        for (uint32_t i = 0; i < samples; ++i) {
+            const uint32_t n = done + i;
+
+            float env = 1.0f;
+            if (ramp > 0) {
+                if (n < ramp)               env = (float)n / (float)ramp;
+                else if (total - n < ramp)  env = (float)(total - n) / (float)ramp;
+            }
+
+            const float phase = 2.0f * (float)M_PI * (float)freqHz
+                              * (float)n / (float)kBeepRate;
+            // LEFT slot only, like everything else here: that is the channel the
+            // MAX98357A picks with its SD pin driven high.
+            output[i * 2]     = (int16_t)(sinf(phase) * kBeepPeak * env);
+            output[i * 2 + 1] = 0;
+        }
+
+        size_t written = 0;
+        i2s_channel_write(_tx, output, samples * 2 * sizeof(int16_t), &written,
+                          portMAX_DELAY);
+    }
+
+    // Drain, same as playWav: the amplifier must not be cut while the DMA still
+    // holds the tail.
+    memset(output, 0, sizeof(output));
+    for (int i = 0; i < 3; i++) {
+        size_t written = 0;
+        i2s_channel_write(_tx, output, sizeof(output), &written, portMAX_DELAY);
+    }
+
+    ampRelease();
+    _playingAudio = false;
+    return true;
 }
 
 bool Audio::playWav(const char* path) {

@@ -97,8 +97,104 @@ void WiFiManager::removeNetwork(const String& ssid) {
     if (_onChanged) _onChanged();
 }
 
+// Why the station gave up, in words.
+//
+// Without this a failed association is indistinguishable from a network out of
+// range: both are a five second silence followed by "Wifi Reconnecting". The
+// reason code is the difference between "the password is wrong" and "that AP is
+// not there", and those have nothing to do with each other.
+static const char* staDisconnectReason(uint8_t reason) {
+    switch (reason) {
+        case WIFI_REASON_AUTH_FAIL:
+        case WIFI_REASON_HANDSHAKE_TIMEOUT:
+        case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+        case WIFI_REASON_MIC_FAILURE:
+            return "wrong password";
+        case WIFI_REASON_AUTH_EXPIRE:
+            // The AP dropping the authentication rather than refusing it
+            // outright. On most home routers this is still a wrong password,
+            // just reported one step later than AUTH_FAIL.
+            return "the AP expired the authentication (usually a wrong password)";
+        case WIFI_REASON_AUTH_LEAVE:
+        case WIFI_REASON_ASSOC_LEAVE:
+        case WIFI_REASON_STA_LEAVING:
+            return "we disconnected, this one is ours";
+        case WIFI_REASON_DISASSOC_DUE_TO_INACTIVITY:
+            return "the AP dropped us for being idle";
+        case WIFI_REASON_TIMEOUT:
+            return "timed out";
+        case WIFI_REASON_NO_AP_FOUND:
+            return "no such network in range (2.4 GHz only)";
+        case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+            return "found, but the security does not match";
+        case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
+            return "found, but below the auth mode threshold";
+        case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
+            return "found, but too weak";
+        // Not ASSOC_EXPIRE alongside it: that is a deprecated alias for the same
+        // value as DISASSOC_DUE_TO_INACTIVITY above, and naming both is a
+        // duplicate case.
+        case WIFI_REASON_ASSOC_TOOMANY:
+            return "the AP turned us away";
+        case WIFI_REASON_BEACON_TIMEOUT:
+            return "lost the AP";
+        default:
+            return "see the reason code";
+    }
+}
+
+// Set whenever the station reports it has stopped trying, which is the only
+// honest signal that begin() will now be accepted. See _beginAttempt().
+static volatile bool gStaDisconnected = false;
+
+// Reports the security an AP advertises, so "the password is right" and "the
+// board will not accept this AP" can be told apart.
+static const char* authModeName(wifi_auth_mode_t mode) {
+    switch (mode) {
+        case WIFI_AUTH_OPEN:            return "open";
+        case WIFI_AUTH_WEP:             return "WEP";
+        case WIFI_AUTH_WPA_PSK:         return "WPA";
+        case WIFI_AUTH_WPA2_PSK:        return "WPA2";
+        case WIFI_AUTH_WPA_WPA2_PSK:    return "WPA/WPA2";
+        case WIFI_AUTH_WPA3_PSK:        return "WPA3";
+        case WIFI_AUTH_WPA2_WPA3_PSK:   return "WPA2/WPA3";
+        case WIFI_AUTH_WPA2_ENTERPRISE: return "WPA2-Enterprise";
+        default:                        return "other";
+    }
+}
+
 void WiFiManager::begin(uint32_t timeoutPerNetworkMs) {
     _timeoutPerNetwork = timeoutPerNetworkMs;
+
+    // The framework's auto-reconnect has to go, and this is not a preference.
+    //
+    // STA.cpp reconnects on its own from inside the disconnect handler —
+    // disconnect() then connect() — for any reason it considers retryable, and
+    // AUTH_EXPIRE is one of them. So every attempt we made was landing on a
+    // station the driver had already put back into "connecting", which is why
+    // esp_wifi_set_config() kept returning ESP_ERR_WIFI_STATE: our credentials
+    // were never applied at all. The endless stream of reason 2 was the driver
+    // retrying the previous config, not an answer about the network we asked
+    // for — a network that was not even in range reported a password error.
+    //
+    // The retry policy belongs here, where the list of networks is.
+    WiFi.setAutoReconnect(false);
+
+    // Arduino defaults the minimum to WPA2_PSK and hands it to the driver as
+    // conf.sta.threshold.authmode whenever a password is given, so an AP
+    // advertising plain WPA is refused before the password is ever tried. Not
+    // OPEN: a password was supplied, so an unencrypted AP is not what was meant.
+    WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
+
+    // Registered once, for the life of the board. It does two jobs: say why an
+    // association failed, and mark the station as settled so the reconnect can
+    // stop guessing when it is safe to call begin() again.
+    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
+        const uint8_t reason = info.wifi_sta_disconnected.reason;
+        gStaDisconnected = true;
+        Serial.printf("WiFi: disconnected, reason %u - %s\n",
+                      reason, staDisconnectReason(reason));
+    }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 
     if (!_tryAllNetworks()) {
         _notify(WiFiStatus::Disconnected);
@@ -140,6 +236,13 @@ bool WiFiManager::_trySTA(const char* ssid, const char* password) {
     // `true` argument powers the radio down, so the retry from loop() came back
     // to a stack that was off and failed the same way again — a board with
     // perfectly good credentials sat printing "Wifi Reconnecting" for ever.
+
+    // The length, never the password itself: this output gets pasted into chat
+    // windows. A 0 here is the whole answer on its own — whatever the user typed
+    // never reached the card.
+    Serial.printf("WiFi: trying \"%s\" (password %u chars)\n",
+                  ssid, (unsigned)strlen(password));
+
     WiFi.mode(WIFI_STA);
     WiFi.disconnect(false);
     WiFi.begin(ssid, password);
@@ -157,13 +260,177 @@ bool WiFiManager::_trySTA(const char* ssid, const char* password) {
     return true;
 }
 
-void WiFiManager::loop() {
-    if (millis() - _lastCheckMs < 10000) return;
-    _lastCheckMs = millis();
+// How long to wait between finishing one failed sweep and starting the next.
+static constexpr uint32_t kSweepGapMs = 10000;
 
-    if (WiFi.status() != WL_CONNECTED) {
-        _notify(WiFiStatus::Reconnecting);
-        _tryAllNetworks();
+// Longest we wait for the station to report itself settled before starting the
+// next attempt anyway. It is a backstop, not the mechanism: normally the
+// disconnect event arrives in a few tens of milliseconds and Settling ends
+// there. The cap matters for the case where there was nothing to disconnect
+// from, which produces no event at all.
+static constexpr uint32_t kSettleMaxMs = 1200;
+
+bool WiFiManager::_loadSweep() {
+    _netIndex = 0;
+    _netCount = 0;
+    if (!_config) return false;
+    return loadNetworksFromJson(*_config, _sweepSsids, _sweepPasses, _netCount)
+           && _netCount > 0;
+}
+
+void WiFiManager::_beginAttempt() {
+    // Nothing is torn down here, and getting to that took two wrong turns worth
+    // recording.
+    //
+    // WiFi.begin() starts with esp_wifi_set_config(), which IDF refuses with
+    // ESP_ERR_WIFI_STATE while the station is still working through a previous
+    // connect — "sta is connecting, cannot set config". There is nothing to poll
+    // either: STAClass reports only WL_DISCONNECTED, WL_IDLE_STATUS,
+    // WL_CONNECTED and WL_STOPPED, with no value meaning "connecting", so
+    // status() reads the same before an attempt and during one.
+    //
+    // A fixed 400 ms settle was a guess at when that ends, and the wrong one:
+    // sweeps two and three failed instantly instead of retrying.
+    //
+    // Cycling WIFI_OFF/WIFI_STA did clear that state, and was the wrong fix:
+    // WIFI_OFF stops the driver, and the begin() below then landed on a stack
+    // that had not finished starting — ESP_ERR_WIFI_NOT_STARTED, which is the
+    // very thing the comment in _trySTA warns about.
+    //
+    // What works is waiting for the disconnect to actually complete, which the
+    // driver does tell us: the event handler registered in begin() sets
+    // gStaDisconnected, and Settling waits on it. By the time we get here the
+    // station is idle and set_config is accepted, with the driver still running.
+    Serial.printf("WiFi: trying \"%s\" (password %u chars)\n",
+                  _sweepSsids[_netIndex].c_str(),
+                  (unsigned)_sweepPasses[_netIndex].length());
+
+    WiFi.begin(_sweepSsids[_netIndex].c_str(), _sweepPasses[_netIndex].c_str());
+    _phase        = Phase::Connecting;
+    _phaseStartMs = millis();
+}
+
+// What the saved networks actually look like on the air. Run once, after the
+// first sweep comes back empty, because it is the only thing that separates
+// "wrong password" from the two faults that look identical from here: an AP on a
+// channel this radio will not associate on, and one whose security the station
+// refuses before the password is ever tried.
+void WiFiManager::_reportAirwaves() {
+    Serial.println("WiFi: scanning to see what is actually out there...");
+    const int found = WiFi.scanNetworks(false, false);
+
+    for (uint32_t i = 0; i < _netCount; ++i) {
+        bool seen = false;
+        for (int j = 0; j < found; ++j) {
+            if (WiFi.SSID(j) != _sweepSsids[i]) continue;
+            seen = true;
+            const int32_t rssi = WiFi.RSSI(j);
+
+            // Beacons are sent slowly and robustly, so an AP shows up in a scan
+            // long after it has become impossible to associate with: the reply
+            // from this end never arrives and the authentication expires. Below
+            // about -80 dBm that is the likeliest reading of a reason 2, far
+            // ahead of the password being wrong.
+            const char* signal = rssi >= -60 ? "strong"
+                               : rssi >= -75 ? "usable"
+                               : rssi >= -85 ? "weak"
+                                             : "too weak to associate";
+
+            Serial.printf("  \"%s\": channel %d, %s, %d dBm (%s)\n",
+                          _sweepSsids[i].c_str(), WiFi.channel(j),
+                          authModeName(WiFi.encryptionType(j)), (int)rssi,
+                          signal);
+        }
+        if (!seen) {
+            Serial.printf("  \"%s\": not on the air\n", _sweepSsids[i].c_str());
+        }
+    }
+
+    WiFi.scanDelete();
+    Serial.println("WiFi: a weak signal, a channel above 11 or a WPA3-only AP "
+                   "all fail however right the password is.");
+}
+
+void WiFiManager::_sweepFailed() {
+    _phase       = Phase::Idle;
+    _lastCheckMs = millis();
+    ++_failedSweeps;
+
+    Serial.printf("WiFi: sweep %u of %u failed\n",
+                  (unsigned)_failedSweeps, (unsigned)_maxSweeps);
+
+    // Once only: a scan blocks for a couple of seconds and the answer does not
+    // change between sweeps.
+    if (_failedSweeps == 1) _reportAirwaves();
+
+    if (_maxSweeps > 0 && _failedSweeps >= _maxSweeps) {
+        _goOffline("out of retries");
+    }
+}
+
+void WiFiManager::_goOffline(const char* why) {
+    // Once per outage: the handler raises a portal and reboots, and firing it
+    // again from the next request would stack that on top of itself.
+    if (_offlineFired) return;
+    _offlineFired = true;
+    Serial.printf("WiFi: offline (%s)\n", why);
+    if (_onOffline) _onOffline(why);
+}
+
+void WiFiManager::loop() {
+    switch (_phase) {
+        case Phase::Connecting:
+            if (WiFi.status() == WL_CONNECTED) {
+                _phase        = Phase::Idle;
+                _failedSweeps = 0;
+                _offlineFired = false;
+                _notify(WiFiStatus::Connected, WiFi.localIP().toString());
+                return;
+            }
+            if (millis() - _phaseStartMs < _timeoutPerNetwork) return;
+
+            // This one is not going to answer. Ask the station to stop, and
+            // wait for it to say it has: clearing the flag first so an event
+            // from earlier cannot pass for this one.
+            ++_netIndex;
+            gStaDisconnected = false;
+            WiFi.disconnect(false);
+            _phase        = Phase::Settling;
+            _phaseStartMs = millis();
+            return;
+
+        case Phase::Settling:
+            if (!gStaDisconnected && millis() - _phaseStartMs < kSettleMaxMs) {
+                return;
+            }
+            if (_netIndex < _netCount) _beginAttempt();
+            else                       _sweepFailed();
+            return;
+
+        case Phase::Idle:
+            if (WiFi.status() == WL_CONNECTED) {
+                _failedSweeps = 0;
+                _offlineFired = false;
+                return;
+            }
+            // Nothing more to try: stay quiet rather than sweeping for ever.
+            if (_maxSweeps > 0 && _failedSweeps >= _maxSweeps) return;
+            if (millis() - _lastCheckMs < kSweepGapMs) return;
+
+            _lastCheckMs = millis();
+            _notify(WiFiStatus::Reconnecting);
+            if (!_loadSweep()) return;
+
+            // Through Settling, so whatever the station was doing has ended
+            // before the first begin() of the sweep. mode() is set here and
+            // never unset: stopping the driver is what produced
+            // ESP_ERR_WIFI_NOT_STARTED.
+            WiFi.mode(WIFI_STA);
+            gStaDisconnected = false;
+            WiFi.disconnect(false);
+            _phase        = Phase::Settling;
+            _phaseStartMs = millis();
+            return;
     }
 }
 
@@ -296,6 +563,43 @@ String urlEncode(const String& cru) {
 // One request, consumed one of two ways. Exactly one of outStr/outFile is set:
 // a String for the short clips, or straight to the card for anything that would
 // not fit in internal heap. A body makes it a POST.
+void WiFiManager::warmUp() {
+    if (!isConnected() || !_config) return;
+
+    String backendUrl = (*_config)["backend_url"] | "";
+    if (backendUrl.length() == 0) return;
+    while (backendUrl.endsWith("/")) backendUrl.remove(backendUrl.length() - 1);
+    if (!backendUrl.startsWith("https://")) return;   // nothing to hand shake
+
+    // The same _tls and _http objects _request() uses, on purpose: this is only
+    // worth anything if the connection left parked here is the one /look picks
+    // up. Going through _request() itself is not an option — it validates the
+    // body as a WAV and would complain about this one.
+    if (!_tlsReady) {
+        const char* ca = (*_config)["backend_ca"] | "";
+        if (strlen(ca) > 0) _tls.setCACert(ca);
+        else                _tls.setCACertBundle(
+                                rootca_crt_bundle_start,
+                                rootca_crt_bundle_end - rootca_crt_bundle_start);
+        _tlsReady = true;
+    }
+
+    const uint32_t t0 = millis();
+    _http.setConnectTimeout(kHttpTimeoutMs);
+    _http.setTimeout(kHttpTimeoutMs);
+    _http.setReuse(true);
+    if (!_http.begin(_tls, backendUrl + "/api/v1/audios")) return;
+
+    const char* token = (*_config)["api_token"] | "";
+    if (strlen(token) > 0) _http.addHeader("X-API-Token", token);
+
+    const int code = _http.GET();
+    _http.end();   // parks the connection, does not close it
+
+    Serial.printf("  [t] TLS warm-up: %u ms (HTTP %d)\n",
+                  (unsigned)(millis() - t0), code);
+}
+
 bool WiFiManager::_request(const String& ruta, const char* qui,
                           const uint8_t* body, size_t bodyLen,
                           String* outStr, File* outFile, const AudioSink* sink,
@@ -307,7 +611,15 @@ bool WiFiManager::_request(const String& ruta, const char* qui,
         Serial.printf("%s: backend_url is not set\n", qui);
         return false;
     }
-    if (!isConnected()) return false;
+    // Every call out to the backend funnels through here, so this is the one
+    // place that can tell "asked for the network while it was down" from a
+    // reconnect that is simply still in progress. Do not wait for the retry
+    // budget: the user pressed a button and something has to answer them.
+    if (!isConnected()) {
+        Serial.printf("%s: no network\n", qui);
+        _goOffline("a request was made with no network");
+        return false;
+    }
 
     while (backendUrl.endsWith("/")) backendUrl.remove(backendUrl.length() - 1);
     const String url = backendUrl + ruta;
