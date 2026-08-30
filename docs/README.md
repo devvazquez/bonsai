@@ -19,9 +19,12 @@ it.
 
 ## Where the images go
 
-`.github/workflows/release.yml` attaches a `manifest.json` to every release and
-the page reads it, so the offsets come from the build rather than from guessing.
-Releases made by hand still work; the page falls back to, in order:
+`.github/workflows/release.yml` attaches a `manifest.json` to every release it
+publishes and the page reads it, so the offsets come from the build rather than
+from guessing. That workflow only runs when someone starts it from the Actions
+tab with a version number, so tags and pushes never publish a release on their
+own.
+Releases assembled some other way still work; the page falls back to, in order:
 
 1. **`manifest.json`** in the [ESP Web Tools](https://esphome.github.io/esp-web-tools/)
    shape. Paths resolve against the release's download URL, so plain file names

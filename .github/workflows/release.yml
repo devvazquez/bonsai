@@ -1,12 +1,12 @@
 name: Build and publish firmware
 
+# By hand only. A release is a thing people are told to install, so it is
+# published when someone decides to publish one, not on every tag that lands.
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build and publish (created if missing)'
+        description: 'Version to publish, e.g. v1.0.0 (the tag is created if it does not exist)'
         required: true
 
 permissions:
@@ -18,7 +18,7 @@ jobs:
     env:
       PIO_ENV: seeed_xiao_esp32s3
       PROJECT: src/firmware/bonsai-firmware
-      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      TAG: ${{ inputs.tag }}
 
     steps:
       - uses: actions/checkout@v4
@@ -100,8 +100,7 @@ jobs:
             0xe000 dist/boot_app0.bin \
             0x10000 dist/firmware.bin
 
-      - name: Tag the commit when the run was started by hand
-        if: github.event_name == 'workflow_dispatch'
+      - name: Tag the commit being built
         run: |
           set -euo pipefail
           if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then

@@ -26,7 +26,7 @@ Using the built-in web server in the firmware, you can configre all the Wifi net
 ## Flashing a board
 The [web flasher](https://devvazquez.github.io/bonsai/) writes a firmware release to a board over USB from the browser, with no toolchain to install. Plug the board in, pick a version and press write. It needs Chrome, Edge or Opera on a computer, since it runs on the Web Serial API.
 
-Tagging a commit `v*` builds the firmware and publishes the release the page reads (`.github/workflows/release.yml`). The page itself lives in [`docs/`](docs/) and is described in [`docs/README.md`](docs/README.md).
+Releases are cut by hand: run the **Build and publish firmware** workflow from the Actions tab, give it a version like `v1.0.0`, and it builds the firmware, tags the commit and publishes the release the page reads (`.github/workflows/release.yml`). The page itself lives in [`docs/`](docs/) and is described in [`docs/README.md`](docs/README.md).
 
 Your settings are safe across a flash: `/config.json`, the saved networks and the voice clips are on the SD card, and only the firmware images get replaced.
 
