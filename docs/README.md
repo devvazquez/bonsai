@@ -50,9 +50,11 @@ network by itself.
 ## Enabling the site
 
 The workflow in `.github/workflows/pages.yml` publishes this directory on every
-push to `main`, and switches Pages on itself the first time it runs. If the run
-fails on that step, turn it on by hand in **Settings, Pages, Build and
-deployment, Source: GitHub Actions** and run the workflow again.
+push to `main`, but Pages has to be switched on once by a person: **Settings,
+Pages, Build and deployment, Source: GitHub Actions**. The workflow cannot do
+it for you, since its token is not allowed to create the site. Until that
+setting is flipped the deploy job fails at `configure-pages`; re-run it
+afterwards and the site goes up.
 
 ## Local preview
 
