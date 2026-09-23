@@ -31,9 +31,11 @@ constexpr int kOv3660Saturation = 0;
 // right in a preview — a preview is judged by eye, and an eye likes a brighter
 // picture. Both can be true at once.
 //
-// Applied as asked, but this is the first line to put back to 0 if the
-// descriptions start missing things in bright parts of the room.
-constexpr int kOv3660Brightness = 1;
+// Back to 0: a photo of a desk under a lamp came out exactly as warned, the
+// lamp flaring into a grey veil over the whole frame and the white desk near
+// clipping. The server now stretches the levels itself (app/images.py), which
+// works far better on a frame that kept its highlights.
+constexpr int kOv3660Brightness = 0;
 
 // Which is also why the exposure bias is negative rather than the brightness.
 // Brightness is an offset applied after the exposure has been chosen, so it
@@ -46,7 +48,10 @@ constexpr int kOv3660AeLevel = -1;
 // these are the sensor's own scales but the values are estimates to within a
 // step — the switches above are unambiguous, these are not.
 constexpr int kOv3660Contrast  = 1;   // -3..3, a touch right of centre
-constexpr int kOv3660Sharpness = 0;   // -3..3, centred
+// +2: the lens is fixed-focus and soft, and edges are what the model reads.
+// The sensor sharpens before JPEG, so it costs nothing and survives the
+// compression better than sharpening afterwards.
+constexpr int kOv3660Sharpness = 2;   // -3..3
 constexpr int kOv3660Denoise   = 0;   // 0..8, hard left, which the UI calls Auto
 
 // The OV3660 pushes more pixels than the OV2640 and, with a single buffer, the
@@ -54,6 +59,16 @@ constexpr int kOv3660Denoise   = 0;   // 0..8, hard left, which the UI calls Aut
 // the last one. That is the "FB-OVF" spam and the esp_camera_fb_get() timeouts
 // this sensor is known for.
 constexpr int kFrameBuffers = 2;
+
+// Frames taken per capture(); the one with the largest JPEG is kept. At a fixed
+// quality the encoder spends bytes on detail, so a frame smeared by the head
+// moving or caught mid-AEC comes out smaller. Each extra frame is one frame
+// time (~60-100 ms at SVGA), no decoding needed.
+constexpr int kBurstFrames = 3;
+
+// Caps the analogue gain so a dim room comes out darker instead of drowning in
+// noise that the JPEG encoder then smears into mush. 0..6 = 2x..128x.
+constexpr gainceiling_t kOv3660GainCeiling = GAINCEILING_8X;
 
 }  // namespace
 
@@ -154,6 +169,7 @@ void Camera::_applySensorTuning() {
     s->set_wb_mode(s, 0);         // Manual AWB off, so AWB is free to work
     s->set_exposure_ctrl(s, 1);   // AEC
     s->set_gain_ctrl(s, 1);       // AGC
+    s->set_gainceiling(s, kOv3660GainCeiling);
     s->set_raw_gma(s, 1);         // GMA
     s->set_lenc(s, 1);            // lens correction
     s->set_bpc(s, 1);             // black pixel correction
@@ -162,7 +178,7 @@ void Camera::_applySensorTuning() {
     s->set_colorbar(s, 0);        // not the test pattern
 
     Serial.printf("Camera sensor OV3660: vflip, sat %d, bri %d, con %d, "
-                  "sharp %d, denoise %d, ae %d, AWB/AEC/AGC/GMA/LENC on\n",
+                  "sharp %d, denoise %d, ae %d, gain<=8x, AWB/AEC/AGC/GMA/LENC on\n",
                   kOv3660Saturation, kOv3660Brightness, kOv3660Contrast,
                   kOv3660Sharpness, kOv3660Denoise, kOv3660AeLevel);
 }
@@ -196,7 +212,22 @@ camera_fb_t* Camera::capture() {
         if (!stale) return nullptr;
         esp_camera_fb_return(stale);
     }
-    return esp_camera_fb_get();
+
+    // Best of a short burst. Holding the current best while fetching the next
+    // leaves the driver one buffer, which with fb_count 2 is enough.
+    camera_fb_t* best = esp_camera_fb_get();
+    if (!best) return nullptr;
+    for (int i = 1; i < kBurstFrames; ++i) {
+        camera_fb_t* fb = esp_camera_fb_get();
+        if (!fb) break;
+        if (fb->len > best->len) {
+            esp_camera_fb_return(best);
+            best = fb;
+        } else {
+            esp_camera_fb_return(fb);
+        }
+    }
+    return best;
 }
 
 void Camera::release(camera_fb_t* fb) {
