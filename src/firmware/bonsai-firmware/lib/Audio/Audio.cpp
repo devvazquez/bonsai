@@ -250,11 +250,22 @@ void Audio::_playerLoop() {
         _underruns = 0;
         _played    = 0;
 
+        // A receive can hand back an odd number of bytes: the ring is a byte
+        // stream, and it returns whatever happens to be in it, not whole
+        // samples. Dropping that last byte would leave the next receive reading
+        // the high half of one sample as the low half of the next - every
+        // sample after it byte-swapped, which is heard as saturated white noise
+        // for the rest of the sentence. So it stays here and goes back in front
+        // of the next chunk. Same fix as the carry in writeStream(), at the
+        // other end of the ring.
+        size_t carried = 0;
+
         for (;;) {
             // 20 ms and not 100: this is how long the DMA is left unfed when
             // there is nothing to send, and it has to stay well inside what the
             // DMA holds.
-            const size_t got = xStreamBufferReceive(_ring, mono, sizeof(mono),
+            const size_t got = xStreamBufferReceive(_ring, mono + carried,
+                                                    sizeof(mono) - carried,
                                                     pdMS_TO_TICKS(20));
             if (got == 0) {
                 // Nothing waiting: either the sentence is over, or the network
@@ -280,7 +291,8 @@ void Audio::_playerLoop() {
             }
             _played += got;
 
-            const size_t samples = got / sizeof(int16_t);
+            const size_t have    = carried + got;
+            const size_t samples = have / sizeof(int16_t);
             const int16_t* in = reinterpret_cast<const int16_t*>(mono);
             for (size_t i = 0; i < samples; ++i) {
                 // Left slot only, right zeroed: the channel the MAX98357A picks
@@ -291,6 +303,15 @@ void Audio::_playerLoop() {
             size_t written = 0;
             i2s_channel_write(_tx, stereo, samples * 2 * sizeof(int16_t),
                               &written, portMAX_DELAY);
+
+            // The odd byte, if there was one, moves to the front for the next
+            // round so alignment is never lost.
+            if (have & 1) {
+                mono[0] = mono[have - 1];
+                carried = 1;
+            } else {
+                carried = 0;
+            }
         }
 
         xSemaphoreGive(_drained);
@@ -360,22 +381,50 @@ size_t Audio::writeStream(const uint8_t* data, size_t len) {
     size_t idx = 0;
     size_t sent = 0;
 
+    // xStreamBufferSend() is allowed to accept only part of what it is given
+    // when the ring fills up and the timeout expires, and a short send that
+    // stops halfway through a sample costs the alignment of everything after
+    // it - the player would read the halves of two neighbouring samples as one
+    // and the sentence would turn into saturated noise. So: keep pushing until
+    // it is all in, and if it genuinely cannot be, leave a half sample recorded
+    // rather than forgotten.
+    auto push = [&](const uint8_t* p, size_t n) -> size_t {
+        size_t done = 0;
+        while (done < n) {
+            const size_t n2 = xStreamBufferSend(_ring, p + done, n - done,
+                                                pdMS_TO_TICKS(1000));
+            if (n2 == 0) break;   // a full second with the ring full: give up
+            done += n2;
+        }
+        return done;
+    };
+
     // The odd byte from a chunk boundary goes in first, so what reaches the ring
     // is always whole little-endian samples.
     if (_hasCarry && idx < len) {
         const uint8_t pair[2] = { _carry, data[idx++] };
-        sent += xStreamBufferSend(_ring, pair, 2, pdMS_TO_TICKS(1000));
+        sent += push(pair, 2);
         _hasCarry = false;
     }
 
     const size_t whole = ((len - idx) / 2) * 2;
     if (whole > 0) {
-        sent += xStreamBufferSend(_ring, data + idx, whole, pdMS_TO_TICKS(1000));
+        sent += push(data + idx, whole);
         idx += whole;
     }
     if (idx < len) {
         _carry    = data[idx];
         _hasCarry = true;
+    }
+
+    // An odd number of bytes actually made it into the ring, so there is half a
+    // sample sitting at the end of it. One byte completes it; anything else -
+    // including the two-byte carry above - leaves the parity wrong and shifts
+    // every sample from here on.
+    if (sent & 1) {
+        Serial.println("audio: the ring stayed full - a sample was cut short");
+        const uint8_t pad = 0;
+        sent += push(&pad, 1);
     }
     return sent;
 }

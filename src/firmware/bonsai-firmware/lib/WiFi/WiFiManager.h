@@ -120,6 +120,40 @@ public:
     bool lookStreaming(const uint8_t* jpeg, size_t jpegLen,
                        const AudioSink& sink, String* spokenText = nullptr);
 
+    // Where the question comes from while /ask's body is open.
+    struct MicSource {
+        // Fired once, the moment the request line and headers are on the wire
+        // and just before the photo starts uploading. This is where the "tell
+        // me" clip is started: it plays over the upload and the backend's
+        // thinking instead of after them.
+        std::function<void()> onUploading;
+
+        // Fills `buf` with up to `cap` bytes of PCM16 and returns how many.
+        // Returning 0 ends the recording, which is what closes the body and
+        // makes the backend transcribe. Blocking for a frame or two is fine and
+        // expected - this is the wearer talking.
+        std::function<size_t(uint8_t* buf, size_t cap)> pull;
+
+        uint32_t rate = 16000;
+    };
+
+    // Photo plus spoken question in a single request, answered by spoken audio.
+    //
+    // The body is raw and uploaded chunked, exactly as /ask documents it:
+    //
+    //     [4 bytes big-endian photo length][JPEG][mic audio until the body ends]
+    //
+    // Chunked is the whole point: the photo reaches the backend - which saves it
+    // and shrinks it for the vision model - while the person is still talking,
+    // so none of that work lands on the wait for the answer.
+    //
+    // HTTPClient cannot do this (it wants a length up front), so this one speaks
+    // HTTP/1.1 directly over the same parked TLS connection the other requests
+    // use.
+    bool askStreaming(const uint8_t* jpeg, size_t jpegLen, const MicSource& mic,
+                      const AudioSink& sink, String* spokenText = nullptr,
+                      String* transcript = nullptr);
+
 private:
     StatusCallback _statusCallback = nullptr;
 

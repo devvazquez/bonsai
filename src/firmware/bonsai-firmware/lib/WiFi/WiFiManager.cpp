@@ -470,6 +470,15 @@ constexpr int      kMaxAudioBytes  = 512 * 1024;
 constexpr int      kMaxStreamBytes = 8 * 1024 * 1024;
 
 constexpr uint16_t kHttpTimeoutMs  = 15000;
+
+// One retry, on a connection built from scratch. Two different failures land
+// here and neither means the request was wrong: a keep-alive connection the far
+// end dropped while it sat parked, and a gateway answering 502/503/504 because
+// the backend behind it was still coming up. Both go through on a second try,
+// and the wearer has already pressed the button - a retry costs less than
+// nothing coming out of the speaker.
+constexpr uint8_t  kRequestAttempts = 2;
+constexpr uint32_t kRetryDelayMs    = 600;
 // 4 KB rather than 2: fewer round trips through mbedTLS and the VFS for the
 // same bytes, and it still sits comfortably in internal RAM as a stack buffer.
 constexpr size_t   kStreamChunk    = 4096;
@@ -637,39 +646,68 @@ bool WiFiManager::_request(const String& ruta, const char* qui,
     }
 
     HTTPClient& http = _http;
-    http.setConnectTimeout(kHttpTimeoutMs);
-    http.setTimeout(kHttpTimeoutMs);
-    // Keep-alive, so end() below parks the connection instead of closing it and
-    // the next request skips the handshake entirely.
-    http.setReuse(true);
-    if (!(isHttps ? http.begin(_tls, url) : http.begin(_plain, url))) {
-        Serial.printf("%s: invalid URL\n", qui);
-        return false;
+    int      codi   = 0;
+    uint32_t waitMs = 0;
+
+    for (uint8_t attempt = 0; attempt < kRequestAttempts; ++attempt) {
+        if (attempt > 0) {
+            // stop(), not end(): end() parks the socket for reuse, and reusing
+            // it is one of the two things being ruled out here. The next
+            // begin() then dials and handshakes from scratch.
+            _tls.stop();
+            _plain.stop();
+            Serial.printf("%s: HTTP %d - one more try on a fresh connection\n",
+                          qui, codi);
+            delay(kRetryDelayMs);
+        }
+
+        http.setConnectTimeout(kHttpTimeoutMs);
+        http.setTimeout(kHttpTimeoutMs);
+        // Keep-alive, so end() below parks the connection instead of closing it
+        // and the next request skips the handshake entirely.
+        http.setReuse(true);
+        if (!(isHttps ? http.begin(_tls, url) : http.begin(_plain, url))) {
+            Serial.printf("%s: invalid URL\n", qui);
+            return false;
+        }
+
+        const char* token = (*_config)["api_token"] | "";
+        if (strlen(token) > 0) http.addHeader("X-API-Token", token);
+
+        // /look returns what it decided to say in X-Bonsai-Text (base64 UTF-8)
+        // and the format of the audio in X-Bonsai-Rate, which the sink needs
+        // before the first sample can go anywhere.
+        const char* wanted[] = { "X-Bonsai-Text", "X-Bonsai-Rate" };
+        http.collectHeaders(wanted, 2);
+
+        // POST()/GET() return once the response headers are in, so this one
+        // number covers connect + TLS handshake + upload + everything the
+        // backend did. What it does not cover is the download, which is timed
+        // separately below: telling those two apart is the whole point, because
+        // one is somebody else's problem and the other is this board's.
+        const uint32_t tSent = millis();
+        if (body && bodyLen > 0) {
+            http.addHeader("Content-Type", "application/json");
+            codi = http.POST(const_cast<uint8_t*>(body), bodyLen);
+        } else {
+            codi = http.GET();
+        }
+        waitMs = millis() - tSent;
+
+        if (codi == HTTP_CODE_OK) break;
+
+        // A dead socket (negative, from HTTPClient itself) or a gateway saying
+        // it could not reach the service. Anything else - a 4xx, a plain 500 -
+        // is the request or the backend being genuinely wrong, and repeating it
+        // would only cost the wearer another few seconds of silence.
+        const bool transient = codi < 0
+                            || codi == HTTP_CODE_BAD_GATEWAY
+                            || codi == HTTP_CODE_SERVICE_UNAVAILABLE
+                            || codi == HTTP_CODE_GATEWAY_TIMEOUT;
+        if (!transient || attempt + 1 >= kRequestAttempts) break;
+
+        http.end();
     }
-
-    const char* token = (*_config)["api_token"] | "";
-    if (strlen(token) > 0) http.addHeader("X-API-Token", token);
-
-    // /look returns what it decided to say in X-Bonsai-Text (base64 UTF-8) and
-    // the format of the audio in X-Bonsai-Rate, which the sink needs before the
-    // first sample can go anywhere.
-    const char* wanted[] = { "X-Bonsai-Text", "X-Bonsai-Rate" };
-    http.collectHeaders(wanted, 2);
-
-    // POST()/GET() return once the response headers are in, so this one number
-    // covers connect + TLS handshake + upload + everything the backend did.
-    // What it does not cover is the download, which is timed separately below:
-    // telling those two apart is the whole point, because one is somebody
-    // else's problem and the other is this board's.
-    const uint32_t tSent = millis();
-    int codi;
-    if (body && bodyLen > 0) {
-        http.addHeader("Content-Type", "application/json");
-        codi = http.POST(const_cast<uint8_t*>(body), bodyLen);
-    } else {
-        codi = http.GET();
-    }
-    const uint32_t waitMs = millis() - tSent;
 
     if (codi != HTTP_CODE_OK) {
         // On a 4xx the body is {"detail": "..."} saying what went wrong.
@@ -970,4 +1008,449 @@ bool WiFiManager::_look(const uint8_t* jpeg, size_t jpegLen,
         }
     }
     return ok;
+}
+
+// ---------------------------------------------------------------------------
+// /ask: the photo and the spoken question in one chunked request.
+//
+// This one does not go through HTTPClient. HTTPClient wants the whole body, or
+// at least its length, before it will send anything, and the entire point here
+// is the opposite: the photo goes up while the person is still deciding what to
+// say, and the body only closes when they stop talking. That is
+// `Transfer-Encoding: chunked`, which HTTPClient cannot produce, so the request
+// is written by hand over the same TLS connection everything else reuses.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct Endpoint {
+    String   host;
+    String   base;     // path prefix, "" for a bare host
+    uint16_t port  = 443;
+    bool     https = true;
+};
+
+bool parseEndpoint(const String& url, Endpoint& out) {
+    String rest = url;
+    if (rest.startsWith("https://")) {
+        out.https = true;
+        out.port  = 443;
+        rest.remove(0, 8);
+    } else if (rest.startsWith("http://")) {
+        out.https = false;
+        out.port  = 80;
+        rest.remove(0, 7);
+    } else {
+        return false;
+    }
+
+    const int slash = rest.indexOf('/');
+    if (slash >= 0) {
+        out.base = rest.substring(slash);
+        rest.remove(slash);
+    }
+    while (out.base.endsWith("/")) out.base.remove(out.base.length() - 1);
+
+    const int colon = rest.lastIndexOf(':');
+    if (colon >= 0) {
+        out.port = (uint16_t)rest.substring(colon + 1).toInt();
+        rest.remove(colon);
+    }
+    out.host = rest;
+    return out.host.length() > 0 && out.port > 0;
+}
+
+// Reads one CRLF-terminated line. Its own loop rather than readStringUntil()
+// because the timeout has to be in milliseconds and has to be ours: the wait for
+// the status line covers everything the backend does, and the wait between body
+// chunks must not.
+bool readLine(WiFiClient& c, String& out, uint32_t timeoutMs) {
+    out = "";
+    const uint32_t t0 = millis();
+    while (millis() - t0 < timeoutMs) {
+        const int n = c.read();
+        if (n < 0) {
+            if (!c.connected() && !c.available()) return false;
+            delay(1);
+            continue;
+        }
+        if (n == '\n') {
+            if (out.endsWith("\r")) out.remove(out.length() - 1);
+            return true;
+        }
+        out += (char)n;
+        if (out.length() > 2048) return false;   // nothing legitimate is this long
+    }
+    return false;
+}
+
+// Reads exactly `want` bytes, handing each piece to `on` as it lands.
+bool readExact(WiFiClient& c, size_t want, uint32_t stallMs,
+               const std::function<bool(const uint8_t*, size_t)>& on) {
+    uint8_t  buf[1024];
+    size_t   done = 0;
+    uint32_t last = millis();
+
+    while (done < want) {
+        size_t chunk = want - done;
+        if (chunk > sizeof(buf)) chunk = sizeof(buf);
+        const int n = c.read(buf, chunk);
+        if (n > 0) {
+            done += (size_t)n;
+            last = millis();
+            if (on && !on(buf, (size_t)n)) return false;
+            continue;
+        }
+        if (!c.connected() && !c.available()) return false;
+        if (millis() - last > stallMs) return false;
+        delay(1);
+    }
+    return true;
+}
+
+bool writeAll(WiFiClient& c, const uint8_t* data, size_t len) {
+    size_t done = 0;
+    while (done < len) {
+        const size_t n = c.write(data + done, len - done);
+        if (n == 0) {
+            if (!c.connected()) return false;
+            delay(1);
+            continue;
+        }
+        done += n;
+    }
+    return true;
+}
+
+// One chunk of a chunked body: the length in hex, the bytes, CRLF.
+bool writeChunk(WiFiClient& c, const uint8_t* data, size_t len) {
+    if (len == 0) return true;
+    char head[16];
+    const int hn = snprintf(head, sizeof(head), "%X\r\n", (unsigned)len);
+    if (!writeAll(c, (const uint8_t*)head, hn)) return false;
+    if (!writeAll(c, data, len)) return false;
+    return writeAll(c, (const uint8_t*)"\r\n", 2);
+}
+
+// The X-Bonsai-* headers come back base64'd, because HTTP headers are ASCII and
+// the answer is not.
+String b64Decode(const String& in) {
+    if (in.length() == 0) return "";
+    const size_t cap = (in.length() * 3) / 4 + 2;
+    unsigned char* plain = (unsigned char*)malloc(cap);
+    if (!plain) return "";
+
+    String out;
+    size_t len = 0;
+    if (mbedtls_base64_decode(plain, cap, &len,
+                              (const unsigned char*)in.c_str(),
+                              in.length()) == 0) {
+        plain[len] = 0;
+        out = String((const char*)plain);
+    }
+    free(plain);
+    return out;
+}
+
+}  // namespace
+
+bool WiFiManager::askStreaming(const uint8_t* jpeg, size_t jpegLen,
+                               const MicSource& mic, const AudioSink& sink,
+                               String* spokenText, String* transcript) {
+    if (!_config || !jpeg || jpegLen == 0) return false;
+
+    String backendUrl = (*_config)["backend_url"] | "";
+    if (backendUrl.length() == 0) {
+        Serial.println("ask: backend_url is not set");
+        return false;
+    }
+    if (!isConnected()) {
+        Serial.println("ask: no network");
+        _goOffline("a request was made with no network");
+        return false;
+    }
+    while (backendUrl.endsWith("/")) backendUrl.remove(backendUrl.length() - 1);
+
+    Endpoint ep;
+    if (!parseEndpoint(backendUrl, ep)) {
+        Serial.printf("ask: backend_url is not a URL: %s\n", backendUrl.c_str());
+        return false;
+    }
+
+    if (ep.https && !_tlsReady) {
+        const char* ca = (*_config)["backend_ca"] | "";
+        if (strlen(ca) > 0) _tls.setCACert(ca);
+        else                _tls.setCACertBundle(
+                                rootca_crt_bundle_start,
+                                rootca_crt_bundle_end - rootca_crt_bundle_start);
+        _tlsReady = true;
+    }
+
+    WiFiClient* c = ep.https ? static_cast<WiFiClient*>(&_tls)
+                             : static_cast<WiFiClient*>(&_plain);
+
+    // Same answer format as /look: raw pcm16 at 8 kHz, which is what fits this
+    // link comfortably and is telephone quality, i.e. speech.
+    const uint32_t outRate = (*_config)["look_rate"] | 8000;
+    const uint32_t micRate = mic.rate ? mic.rate : 16000;
+
+    String query = String("?deviceId=") + urlEncode(WiFi.macAddress())
+                 + "&lang=" + urlEncode(bonsai::lang())
+                 + "&audioFormat=pcm16&sampleRate=" + String(outRate)
+                 + "&micRate=" + String(micRate);
+
+    const char* token = (*_config)["api_token"] | "";
+
+    String head = String("POST ") + ep.base + "/api/v1/ask" + query + " HTTP/1.1\r\n"
+                + "Host: " + ep.host + "\r\n"
+                + "User-Agent: bonsai-glasses\r\n"
+                + "Content-Type: application/octet-stream\r\n"
+                + "Transfer-Encoding: chunked\r\n"
+                + "Accept: application/octet-stream\r\n"
+                + "Connection: keep-alive\r\n";
+    if (strlen(token) > 0) head += String("X-API-Token: ") + token + "\r\n";
+    head += "\r\n";
+
+    // The photo goes in one chunk: four length bytes and the JPEG behind them.
+    uint8_t len4[4] = {
+        (uint8_t)(jpegLen >> 24), (uint8_t)(jpegLen >> 16),
+        (uint8_t)(jpegLen >> 8),  (uint8_t)(jpegLen),
+    };
+
+    bool clipStarted = false;
+    bool sentHead    = false;
+
+    // Two goes at getting the photo on the wire. The first one reuses the
+    // connection warmUp() parked, and a parked connection the far end has since
+    // dropped fails on the first write - which is exactly here, before anything
+    // irreversible has happened. Once the mic is recording there is no retry:
+    // the person is talking and we are not asking them to repeat it.
+    for (int attempt = 0; attempt < 2 && !sentHead; ++attempt) {
+        if (attempt > 0) {
+            c->stop();
+            Serial.println("ask: the parked connection was dead, dialling again");
+        }
+
+        const uint32_t tConn = millis();
+        if (!c->connected()) {
+            if (!c->connect(ep.host.c_str(), ep.port)) {
+                Serial.printf("ask: could not connect to %s:%u\n",
+                              ep.host.c_str(), ep.port);
+                continue;
+            }
+            Serial.printf("  [t] ask: %u ms to connect and handshake\n",
+                          millis() - tConn);
+        }
+        c->setNoDelay(true);
+
+        // Anything left over from an earlier response would be read as our
+        // status line.
+        while (c->available()) c->read();
+
+        if (!writeAll(*c, (const uint8_t*)head.c_str(), head.length())) continue;
+
+        // The clip starts here, not after the upload: this is the whole reason
+        // the photo is uploaded chunked. It plays over the upload, over the
+        // transcription and over whatever Groq's queue decides to charge today.
+        if (!clipStarted) {
+            clipStarted = true;
+            if (mic.onUploading) mic.onUploading();
+        }
+
+        char chead[16];
+        const int chn = snprintf(chead, sizeof(chead), "%X\r\n",
+                                 (unsigned)(jpegLen + 4));
+        if (!writeAll(*c, (const uint8_t*)chead, chn))     continue;
+        if (!writeAll(*c, len4, 4))                        continue;
+        if (!writeAll(*c, jpeg, jpegLen))                  continue;
+        if (!writeAll(*c, (const uint8_t*)"\r\n", 2))      continue;
+
+        sentHead = true;
+    }
+
+    if (!sentHead) {
+        Serial.println("ask: could not send the photo");
+        c->stop();
+        return false;
+    }
+
+    const uint32_t tPhoto = millis();
+    Serial.printf("  [t] ask: %u KB of photo uploaded\n",
+                  (unsigned)(jpegLen / 1024));
+
+    // --- the question -------------------------------------------------------
+    //
+    // Straight from the mic to the socket, frame by frame. Nothing is buffered
+    // here: by the time the person stops talking, everything but the last frame
+    // is already at the backend, so the only thing left to wait for is Whisper.
+    // 16 KB and not 4: the first thing the gate hands over is the pre-roll, the
+    // audio from just before it decided somebody was talking, and at 16 kHz that
+    // is around 10 KB on its own. A buffer that cannot hold it silently loses
+    // the first word of every question.
+    constexpr size_t kMicBuf = 16 * 1024;
+    uint8_t* mbuf = (uint8_t*)heap_caps_malloc(kMicBuf, MALLOC_CAP_SPIRAM);
+    if (!mbuf) {
+        Serial.println("ask: no PSRAM for the mic buffer");
+        c->stop();
+        return false;
+    }
+
+    size_t micBytes = 0;
+    bool   micOk    = true;
+    for (;;) {
+        const size_t n = mic.pull ? mic.pull(mbuf, kMicBuf) : 0;
+        if (n == 0) break;                       // the wearer stopped talking
+        if (!writeChunk(*c, mbuf, n)) {
+            Serial.println("ask: the connection dropped while recording");
+            micOk = false;
+            break;
+        }
+        micBytes += n;
+    }
+    heap_caps_free(mbuf);
+
+    if (!micOk) {
+        c->stop();
+        return false;
+    }
+    if (micBytes == 0) {
+        // Nothing was said. Sending an empty body only buys a 400 from the
+        // backend a second later, and the caller already knows how to say "I
+        // heard nothing" without being told twice.
+        Serial.println("ask: nothing was said, dropping the request");
+        c->stop();
+        return false;
+    }
+
+    // The zero-length chunk is what tells the backend the question is over.
+    if (!writeAll(*c, (const uint8_t*)"0\r\n\r\n", 5)) {
+        Serial.println("ask: could not close the body");
+        c->stop();
+        return false;
+    }
+
+    const uint32_t recMs = millis() - tPhoto;
+    Serial.printf("  [t] ask: %u KB of question over %u ms (%.1f s of audio)\n",
+                  (unsigned)(micBytes / 1024), recMs,
+                  (float)micBytes / (float)(micRate * 2));
+
+    // --- the answer ---------------------------------------------------------
+
+    const uint32_t tWait = millis();
+    String line;
+    // Generous: this covers the transcription plus the vision model plus the
+    // first sentence of speech being synthesised.
+    if (!readLine(*c, line, 30000)) {
+        Serial.println("ask: the backend said nothing back");
+        c->stop();
+        return false;
+    }
+
+    int code = 0;
+    {
+        const int sp = line.indexOf(' ');
+        if (sp > 0) code = line.substring(sp + 1, sp + 4).toInt();
+    }
+
+    String   textB64, transcriptB64;
+    uint32_t rate      = 0;
+    bool     chunked   = false;
+    long     clen      = -1;
+
+    for (;;) {
+        if (!readLine(*c, line, 15000)) {
+            Serial.println("ask: the headers ended early");
+            c->stop();
+            return false;
+        }
+        if (line.length() == 0) break;
+
+        const int colon = line.indexOf(':');
+        if (colon < 0) continue;
+        String name  = line.substring(0, colon);
+        String value = line.substring(colon + 1);
+        value.trim();
+        name.toLowerCase();
+
+        if      (name == "x-bonsai-text")       textB64       = value;
+        else if (name == "x-bonsai-transcript") transcriptB64 = value;
+        else if (name == "x-bonsai-rate")       rate          = value.toInt();
+        else if (name == "content-length")      clen          = value.toInt();
+        else if (name == "transfer-encoding")   { value.toLowerCase();
+                                                  chunked = value.indexOf("chunked") >= 0; }
+    }
+
+    if (code != 200) {
+        Serial.printf("ask: HTTP %d\n", code);
+        // The detail is JSON and short; worth printing, it says what the backend
+        // did not like.
+        String body;
+        readExact(*c, clen > 0 && clen < 512 ? (size_t)clen : 0, 2000,
+                  [&](const uint8_t* p, size_t n) {
+                      for (size_t i = 0; i < n; ++i) body += (char)p[i];
+                      return true;
+                  });
+        if (body.length()) Serial.println(body);
+        c->stop();
+        return false;
+    }
+
+    if (transcript && transcriptB64.length()) *transcript = b64Decode(transcriptB64);
+    if (spokenText && textB64.length())       *spokenText = b64Decode(textB64);
+    if (transcript && transcript->length())
+        Serial.printf("ask: heard \"%s\"\n", transcript->c_str());
+
+    // The amplifier holds GPIO8, which is the card's MISO, so nothing may touch
+    // the card until the answer has finished playing. Same rule as /look.
+    SdGuard sd(_sdLock);
+
+    if (sink.onStart && !sink.onStart(rate)) {
+        c->stop();
+        return false;
+    }
+
+    size_t total = 0;
+    auto   feed  = [&](const uint8_t* p, size_t n) {
+        total += n;
+        return sink.onChunk ? sink.onChunk(p, n) : true;
+    };
+
+    bool ok = true;
+    if (chunked) {
+        for (;;) {
+            if (!readLine(*c, line, kStallTimeoutMs)) { ok = false; break; }
+            const size_t n = (size_t)strtoul(line.c_str(), nullptr, 16);
+            if (n == 0) break;                       // last chunk
+            if (!readExact(*c, n, kStallTimeoutMs, feed)) { ok = false; break; }
+            if (!readLine(*c, line, kStallTimeoutMs)) { ok = false; break; }  // CRLF
+        }
+        // The trailer, if any, up to the blank line. Read so the connection is
+        // left clean enough to reuse.
+        if (ok) { while (readLine(*c, line, 200) && line.length() > 0) {} }
+    } else if (clen > 0) {
+        ok = readExact(*c, (size_t)clen, kStallTimeoutMs, feed);
+    } else {
+        // Neither length nor chunks: it ends when the connection does.
+        uint8_t  buf[1024];
+        uint32_t last = millis();
+        while (c->connected() || c->available()) {
+            const int n = c->read(buf, sizeof(buf));
+            if (n > 0) { last = millis(); if (!feed(buf, (size_t)n)) break; continue; }
+            if (millis() - last > kStallTimeoutMs) break;
+            delay(1);
+        }
+        // Closed by the server, so there is nothing to park.
+        c->stop();
+    }
+
+    Serial.printf("  [t] ask: %u ms from the last word to the first sample, "
+                  "%u KB spoken\n",
+                  millis() - tWait, (unsigned)(total / 1024));
+
+    if (!ok) {
+        Serial.println("ask: the answer was cut short");
+        c->stop();
+    }
+
+    return total > 0;
 }

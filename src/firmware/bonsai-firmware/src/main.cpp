@@ -7,6 +7,8 @@
 #include <ArduinoJson.h>
 #include <Lang.h>
 #include <SetupPortal.h>
+#include <Mic.h>
+#include <freertos/stream_buffer.h>
 #include <esp_timer.h>
 
 // The Arduino loop task gets 8 KB by default, and that is not enough for what
@@ -56,6 +58,7 @@ constexpr const char* kSdProbeFile = "/.bonsai-probe";
 Camera      camera;
 WiFiManager wifi;
 Audio       audio;
+Mic         mic;
 SetupPortal portal;
 
 namespace {
@@ -346,11 +349,311 @@ void look() {
 
     if (!ok) {
         Serial.println("look: nothing was spoken.");
+        // Something has to come out of the speaker. From the outside, a backend
+        // that answered 502 and a board that died look exactly the same: the
+        // button was pressed and nothing happened. Synthesised rather than a
+        // clip, because the moment the backend is unreachable is the moment a
+        // clip that was never downloaded cannot be fetched either.
+        audio.beep(392, 140);
         return;
     }
 
     // "to answer" is the number that matters: button pressed to first sound.
     Serial.printf("  [t] TOTAL %u ms = capture %u + speak %u   (to answer: %u ms)\n",
+                  millis() - tAll, capMs, reqMs, firstSampleMs);
+}
+
+// ---------------------------------------------------------------------------
+// The "tell me" clip, played on its own task.
+//
+// It has to overlap the photo upload, and playing it is blocking by nature: the
+// clip is pulled into PSRAM and then pushed at the I2S DMA in real time. So it
+// goes on a task of its own while the loop task writes the photo to the socket.
+//
+// It takes the card lock for the whole clip and not only for the read, because
+// the amplifier owns GPIO8 — the card's MISO — while it plays. That is the same
+// lock the background photo writer takes, so the two take turns instead of
+// corrupting each other. See the note on kAmpEnable in Audio.h.
+// ---------------------------------------------------------------------------
+
+TaskHandle_t      clipTask = nullptr;
+SemaphoreHandle_t clipDone = nullptr;
+volatile DefaultAudios clipWanted = DefaultAudios::START_TALKING;
+
+void clipTaskFn(void*) {
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        xSemaphoreTakeRecursive(sdLock, portMAX_DELAY);
+        audio.playDefault(clipWanted);
+        xSemaphoreGiveRecursive(sdLock);
+
+        xSemaphoreGive(clipDone);
+    }
+}
+
+// Starts a clip and returns at once. At most one at a time: the amplifier pin
+// has one owner.
+bool startClip(DefaultAudios which) {
+    if (!clipTask || !clipDone) return false;
+    if (audio.isPlaying()) return false;
+
+    // Any leftover completion from a clip nobody waited for.
+    xSemaphoreTake(clipDone, 0);
+    clipWanted = which;
+    xTaskNotifyGive(clipTask);
+    return true;
+}
+
+// Waits for the clip to finish. The recording cannot start before it does: the
+// mic and the amplifier share the I2S controller, and a mic opened early would
+// record the glasses talking to themselves.
+void waitClip(uint32_t timeoutMs) {
+    if (!clipDone) return;
+    if (xSemaphoreTake(clipDone, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
+        Serial.println("clip: still playing, carrying on without it");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The question, recorded on its own task.
+//
+// The mic used to be opened by the HTTP code, when it asked for the first
+// bytes of audio — that is, only once the photo had finished uploading. With
+// the clip now starting on the button press, a slow upload would leave a gap
+// between "tell me" ending and the mic opening, and whatever the wearer said
+// in it was lost. So recording starts the moment the clip ends, whatever the
+// network is doing, and the voiced audio queues in PSRAM until the request is
+// ready to take it.
+// ---------------------------------------------------------------------------
+
+struct Recording {
+    // 16 s at 16 kHz PCM16: the gate's 15 s ceiling plus the pre-roll. In PSRAM,
+    // where half a megabyte is nothing.
+    static constexpr size_t kBytes = 16 * kMicRate * 2;
+
+    StreamBufferHandle_t stream  = nullptr;
+    StaticStreamBuffer_t streamStruct;
+    uint8_t*             storage = nullptr;
+    SemaphoreHandle_t    finished = nullptr;
+    VoiceGate            gate;
+    uint32_t             gain       = 4;
+    bool                 clipGoing  = false;
+
+    volatile bool abort        = false;
+    volatile bool done         = false;
+    volatile bool gaveUp       = false;
+    volatile bool heardAny     = false;
+    volatile bool clipConsumed = false;
+    volatile uint32_t dropped  = 0;
+};
+
+void recordTaskFn(void* arg) {
+    Recording& r = *static_cast<Recording*>(arg);
+
+    // Not before the clip is done: the amplifier and the mic are two channels
+    // of the same I2S controller, and the mic would otherwise record the clip.
+    // Waited in slices so that a request that has already failed does not keep
+    // this task around for the whole clip.
+    if (r.clipGoing) {
+        for (uint32_t waited = 0; waited < 8000 && !r.abort; waited += 100) {
+            if (xSemaphoreTake(clipDone, pdMS_TO_TICKS(100)) == pdTRUE) {
+                r.clipConsumed = true;
+                break;
+            }
+        }
+        if (!r.clipConsumed && !r.abort)
+            Serial.println("clip: still playing, carrying on without it");
+    }
+
+    if (!r.abort && mic.begin(r.gain)) {
+        Serial.println("  [t] mic: listening");
+        int16_t frame[kMicFrame];
+
+        auto push = [&](const void* p, size_t len) {
+            // A stalled network fills the buffer; better to drop audio than to
+            // stop reading the mic and let the DMA drop it for us, silently.
+            const size_t sent = xStreamBufferSend(r.stream, p, len, pdMS_TO_TICKS(20));
+            if (sent < len) r.dropped += len - sent;
+        };
+
+        while (!r.abort) {
+            const size_t n = mic.read(frame, kMicFrame, 300);
+            if (n == 0) {
+                // The DMA gave nothing for 300 ms. That is the mic failing, not
+                // a quiet room — a quiet room still produces samples.
+                Serial.println("mic: no samples");
+                break;
+            }
+            const VoiceGate::Verdict v = r.gate.feed(frame, n, millis());
+            if (v == VoiceGate::Verdict::Listening) continue;
+            if (v == VoiceGate::Verdict::Silence) { r.gaveUp = true; break; }
+            if (v == VoiceGate::Verdict::Done) break;
+
+            // Voice. On the first voiced frame the gate also hands back the
+            // audio from just before it decided, so the first word is not
+            // clipped off.
+            if (r.gate.prerollSamples() > 0)
+                push(r.gate.preroll(), r.gate.prerollSamples() * 2);
+            push(frame, n * 2);
+            r.heardAny = true;
+        }
+        mic.end();
+    }
+
+    r.done = true;
+    xSemaphoreGive(r.finished);
+    vTaskDelete(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// What a single button press does now: say "tell me", photograph what is in
+// front of the wearer, listen to the question, and answer it out loud.
+//
+// The clip starts on the press itself: the capture, the connection and the
+// photo upload all happen underneath it, and the mic opens the moment it ends.
+//
+// One request does all of it. The body goes up chunked — photo first, then the
+// question as it is recorded — so by the time the person stops talking the
+// backend has long since saved and shrunk the photo, and the only thing left
+// to wait for is the transcription and the model. See docs/latencia.md.
+// ---------------------------------------------------------------------------
+void ask() {
+    if (!wifi.isConnected()) {
+        Serial.println("ask: no WiFi.");
+        offlineRequested = true;
+        return;
+    }
+    if (String(configDoc["backend_url"] | "").length() == 0) {
+        Serial.println("ask: backend_url is not set - send \"backend <url>\".");
+        audio.playDefault(DefaultAudios::MISSING_CONFIG);
+        return;
+    }
+
+    const uint32_t tAll = millis();
+
+    // On the press, before anything else. Only a clip that actually started is
+    // worth waiting for: a missing file - a card that never downloaded it -
+    // would otherwise cost the wearer the whole timeout before the mic opens.
+    static Recording rec;
+    rec.clipGoing = startClip(DefaultAudios::START_TALKING);
+
+    const uint32_t tCap = millis();
+    camera_fb_t* fb = camera.capture();
+    const uint32_t capMs = millis() - tCap;
+    if (!fb) {
+        Serial.println("ask: the camera returned no frame.");
+        if (rec.clipGoing) waitClip(3000);
+        return;
+    }
+    Serial.printf("  [t] capture: %u ms for %u KB\n",
+                  capMs, (unsigned)(fb->len / 1024));
+
+    savePhotoInBackground(fb->buf, fb->len);
+
+    // --- the question -------------------------------------------------------
+
+    VoiceGate::Config gateCfg;
+    gateCfg.debug = configDoc["mic_debug"] | false;
+    if (!rec.storage)
+        rec.storage = (uint8_t*)heap_caps_malloc(Recording::kBytes + 1, MALLOC_CAP_SPIRAM);
+    if (!rec.finished) rec.finished = xSemaphoreCreateBinary();
+    if (!rec.storage || !rec.finished || !rec.gate.begin(gateCfg)) {
+        Serial.println("ask: no memory for the recording");
+        if (rec.clipGoing) waitClip(3000);
+        camera.release(fb);
+        return;
+    }
+    rec.stream = xStreamBufferCreateStatic(Recording::kBytes + 1, 1, rec.storage,
+                                           &rec.streamStruct);
+    rec.gain         = configDoc["mic_gain"] | 4;
+    rec.abort        = false;
+    rec.done         = false;
+    rec.gaveUp       = false;
+    rec.heardAny     = false;
+    rec.clipConsumed = false;
+    rec.dropped      = 0;
+    xSemaphoreTake(rec.finished, 0);
+    if (xTaskCreatePinnedToCore(recordTaskFn, "record", 6144, &rec, 3, nullptr, 0) != pdPASS) {
+        Serial.println("ask: could not start the recording task");
+        vStreamBufferDelete(rec.stream);
+        rec.stream = nullptr;
+        if (rec.clipGoing) waitClip(3000);
+        camera.release(fb);
+        return;
+    }
+
+    WiFiManager::MicSource source;
+    source.rate = kMicRate;
+
+    // Drains whatever the recording task has queued. Returns 0 - which closes
+    // the body - only once the task has finished and the queue is empty.
+    source.pull = [&](uint8_t* buf, size_t cap) -> size_t {
+        for (;;) {
+            const bool finished = rec.done;
+            const size_t n = xStreamBufferReceive(rec.stream, buf, cap,
+                                                  finished ? 0 : pdMS_TO_TICKS(50));
+            if (n > 0 || finished) return n;
+        }
+    };
+
+    // --- the answer ---------------------------------------------------------
+
+    String   spoken, heard;
+    uint32_t firstSampleMs = 0;
+    bool     started       = false;
+
+    WiFiManager::AudioSink sink;
+    sink.onStart = [&](uint32_t rate) {
+        firstSampleMs = millis() - tAll;
+        started       = true;
+        Serial.printf("  [t] first sample at %u ms, %u Hz\n", firstSampleMs,
+                      rate ? rate : 16000u);
+        return audio.beginStream(rate);
+    };
+    sink.onChunk = [&](const uint8_t* pcm, size_t len) {
+        audio.writeStream(pcm, len);
+        return true;
+    };
+
+    const uint32_t tReq = millis();
+    const bool ok = wifi.askStreaming(fb->buf, fb->len, source, sink,
+                                      &spoken, &heard);
+    if (started) audio.endStream();     // owed unconditionally: it holds GPIO8
+    const uint32_t reqMs = millis() - tReq;
+
+    // Whatever happened, the recording stops and the mic goes back: its
+    // channel and the amplifier's live on the same I2S controller.
+    rec.abort = true;
+    xSemaphoreTake(rec.finished, pdMS_TO_TICKS(10000));
+    vStreamBufferDelete(rec.stream);
+    rec.stream = nullptr;
+    // The request died before the recording got as far as the clip.
+    if (rec.clipGoing && !rec.clipConsumed) waitClip(3000);
+    camera.release(fb);
+
+    const bool heardAny = rec.heardAny;
+    const bool gaveUp   = rec.gaveUp;
+    Serial.printf("  [t] mic: floor %u, peak %u, %u ms of speech%s\n",
+                  rec.gate.noiseFloor(), rec.gate.peak(), rec.gate.speechMs(),
+                  rec.dropped ? ", some audio DROPPED (network stalled)" : "");
+
+    if (!ok) {
+        if (gaveUp && !heardAny) {
+            // Nothing was said. That is a normal outcome, not a fault: a press
+            // by accident, or someone who changed their mind. Two short notes
+            // rather than the error tone.
+            Serial.println("ask: nobody said anything.");
+            audio.beep(660, 90);
+            audio.beep(520, 90);
+        } else {
+            Serial.println("ask: nothing was spoken.");
+            audio.beep(392, 140);
+        }
+        return;
+    }
+
+    Serial.printf("  [t] TOTAL %u ms = capture %u + ask %u   (to answer: %u ms)\n",
                   millis() - tAll, capMs, reqMs, firstSampleMs);
 }
 
@@ -559,6 +862,15 @@ void setup() {
     // with the button polling. Low priority — nothing waits on this.
     xTaskCreatePinnedToCore(photoTask, "photo", 4096, nullptr, 1, nullptr, 0);
 
+    // The clip task: core 0 as well, and above the photo writer because it is
+    // feeding the I2S DMA in real time while the loop task uploads the photo.
+    // 8 KB and not 4: playWav() puts a 2 KB staging buffer on the stack and then
+    // opens a file, and the VFS layer's own path handling on top of that was
+    // enough to trip the stack canary on the very first clip. The loop task
+    // carries 16 KB for the same kind of reason.
+    clipDone = xSemaphoreCreateBinary();
+    xTaskCreatePinnedToCore(clipTaskFn, "clip", 8192, nullptr, 3, &clipTask, 0);
+
     if (!camera.begin()) {
         Serial.println("Camera initialization failed.");
         while(1);
@@ -697,10 +1009,12 @@ void loop() {
     if (waitingDouble && now - lastRelease > DOUBLE_PRESS_MS) {
         waitingDouble = false;
         if (pressCount == 1) {
-            look();
+            ask();
         } else if (pressCount >= 2) {
-            // double press — add action here
-            audio.playDefault(DefaultAudios::START_TALKING);
+            // Double press: describe what is in front of the wearer without
+            // being asked anything. That is /look, which needs no voice and is
+            // the fallback when it is too loud to be heard.
+            look();
         }
         pressCount = 0;
     }
